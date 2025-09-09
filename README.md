@@ -22,7 +22,10 @@ You can replace the dataset file to run the Gibson or Matterport dataset.
 
     python test.py
 
-You can replace the dataset file to test on the Gibson or Matterport dataset.
+You can replace the dataset file to test on the Gibson or Matterport dataset. Please download the model checkpoint from this link:
+  <a href="https://huggingface.co/freeA1/top2pano/tree/main" target="_blank" rel="noopener noreferrer">
+    https://huggingface.co/freeA1/top2pano/tree/main
+  </a>.
 
 
 # Generate panoramas on the floor plan
@@ -36,7 +39,7 @@ You can replace the dataset file to test on the Gibson or Matterport dataset.
 ## Dataset Preparation and Rendering
 
 Before rendering, you must run the import preparation scripts inside the `dataset_prep` folder to organize and preprocess your data. 
-> Check expected dataset structure to pass the correct paths to the scripts.
+> Check the expected dataset structure to pass the correct paths to the scripts.
 
 ### 1. Prepare the Dataset
 
