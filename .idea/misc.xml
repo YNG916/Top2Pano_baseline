@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="top2pano" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="control" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="top2pano" project-jdk-type="Python SDK" />
 </project>

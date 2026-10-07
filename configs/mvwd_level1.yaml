@@ -1,6 +1,6 @@
 # Paths can be overridden from the CLI; no import of the dataset's mvwd.py.
 data:
-  root: ../../multiview_ws/datasets/MultiViewWorldDataset_v1
+  root: /hfs2/work/workspace/scratch/ka_wq8392-multiview/datasets/MultiViewWorldDataset_v1
   segmentation_root: artifacts/mvwd/sam
   cache_root: artifacts/mvwd/cache
   bev_size: 512

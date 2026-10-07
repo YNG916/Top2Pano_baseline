@@ -1,6 +1,11 @@
 # Top2Pano: Learning to Generate Indoor Panoramas from Top-Down View
 
-MVWD Level 1 perspective adaptation: [README_MVWD_LEVEL1.md](README_MVWD_LEVEL1.md).
+MVWD Level 1 perspective adaptation and HoreKa-2 interactive GPU debugging:
+[README_MVWD_LEVEL1.md](README_MVWD_LEVEL1.md).
+
+For the current MVWD/HoreKa-2 setup use `environment_mvwd.yaml`. The setup,
+Gibson/Matterport and panorama instructions below retain the upstream workflow;
+`environment.yaml` records its historical dependencies.
 
 ![teaser](assets/teaser.png)
 

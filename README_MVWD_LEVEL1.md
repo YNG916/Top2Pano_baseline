@@ -56,22 +56,92 @@ scripts/prepare_mvwd.py         SAM 条件和可选 npy/memmap 缓存
 train_mvwd.py / infer_mvwd.py   训练与推理
 ```
 
-adapter 需要 Python ≥3.9、NumPy、Pillow ≥9.1、PyYAML；模型使用原 Top2Pano dependencies。
-新增 `environment_mvwd.yaml` 将 Python 调整为 3.10，并提供这条入口需要的依赖。
-原 `environment.yaml` 不变。所有命令在本仓库目录执行：
+adapter 已兼容当前 Python 3.8 环境，使用 NumPy、Pillow ≥9.1、PyYAML；模型保留原
+Top2Pano 实现。目前已验证的 `top2pano` 环境为 Python 3.8.20、PyTorch 2.0.1、
+TorchVision 0.15.2、CUDA build 11.8 和 Lightning 1.5.0，已有环境无需重建。
+`environment_mvwd.yaml` 已更新为当前已验证环境的完整快照；需要重建时使用该文件。
+原 `environment.yaml` 保留上游历史依赖并已标注用途。HOME 同步保留 YAML、Conda explicit
+和 pip freeze 快照，位于 `~/.config/multiview/environments/`。
 
 ```bash
-conda env create -f environment_mvwd.yaml
-conda activate top2pano-mvwd
+source ~/.config/multiview/storage.sh
+conda activate top2pano
+cd ~/multiview_baselines/top2pano
 ```
 
-配置中的相对路径均以本仓库为基准。默认 dataset root 指向现有
-`../../multiview_ws/datasets/MultiViewWorldDataset_v1`；也可用各命令的 `--root` 指定。
+HOME 仓库入口是 workspace 实际仓库的软链接，可继续编辑和运行。完整存储、环境及
+路径说明见 `~/.config/multiview/STORAGE_USAGE.md`。
+
+配置中的相对路径均以解析后的实际仓库为基准。迁移后默认 dataset root 为
+`/hfs2/work/workspace/scratch/ka_wq8392-multiview/datasets/MultiViewWorldDataset_v1`；
+也可用各命令的 `--root` 指定。
 不会依赖启动时的工作目录来定位 payload。
+
+## 集群调试：共用一个交互式 H100 作业
+
+数据检查、权重初始化、SAM 小子集预处理、I/O 缓存、小规模训练、推理和测试，均在
+同一个交互式计算节点中直接执行下面的 Python 命令。先申请一次资源，再按步骤调试。
+
+在 HoreKa-2 登录节点上创建 tmux 会话，并申请资源：
+
+```bash
+tmux new -s top2pano-h100
+
+salloc \
+  --job-name=top2pano-debug \
+  --partition=gpu-h100 \
+  --nodes=1 \
+  --ntasks=1 \
+  --gres=gpu:1 \
+  --cpus-per-task=8 \
+  --mem=64G \
+  --time=2-00:00:00
+```
+
+等待资源分配成功后，进入计算节点：
+
+```bash
+srun --gres=gpu:1 --pty bash -l
+hostname
+nvidia-smi
+conda activate top2pano
+cd /hfs2/data/home/ka_anthropomatik/ka_wq8392/multiview_baselines/top2pano
+mkdir -p artifacts/mvwd/debug_logs
+set -o pipefail
+```
+
+`gpu-h100` 最长允许 48 小时，`dev-gpu-h100` 最长 1 小时；这里使用普通分区。
+资源仍需等待调度，48 小时从分配成功后开始计时。进入 GPU shell 时保留 `--gres=gpu:1`。
+参见 [HoreKa-2 分区及交互作业说明](https://docs.nhr.kit.edu/usage/slurm/)。
+
+先验证当前环境的 CUDA 前向和反向计算，再开始 SAM 或训练：
+
+```bash
+python - <<'PY'
+import torch
+print("PyTorch:", torch.__version__, "CUDA:", torch.version.cuda)
+print("GPU:", torch.cuda.get_device_name(0))
+x = torch.randn(256, 256, device="cuda", requires_grad=True)
+(x @ x).square().mean().backward()
+torch.cuda.synchronize()
+print("CUDA forward/backward passed")
+PY
+```
+
+后续命令都在这个 shell 内执行。需要保存终端日志时，例如：
+
+```bash
+python -u scripts/inspect_mvwd.py --scene Rs_int 2>&1 \
+  | tee artifacts/mvwd/debug_logs/inspect.log
+```
+
+按 `Ctrl-b` 再按 `d` 可暂时离开 tmux；重新连接到同一台登录节点后，执行
+`tmux attach -t top2pano-h100` 恢复会话。tmux 保留 SSH 断开后的会话，作业到时仍会结束。
+调试结束后，先 `exit` 离开计算节点 shell，再 `exit` 退出 salloc shell，释放资源。
 
 ## 第一步：检查真实数据
 
-无需模型权重或 SAM 缓存：
+在上述交互式计算节点内执行；此步只用 CPU，无需模型权重或 SAM 缓存：
 
 ```bash
 python scripts/inspect_mvwd.py --scene Rs_int
@@ -81,7 +151,49 @@ python scripts/inspect_mvwd.py --scene Rs_int
 RGB、`bev_valid.png` 和 `inspection.json`。该入口检查 train/val/test 场景、episode 和
 configuration 无交集，并检查新 BEV 标定的坐标往返一致性。
 
+先查看 BEV 轨迹和目标 RGB，再准备 SAM；完整 sample 检查见下一步的 `--load-query`。
+
 ## 第二步：准备 SAM 条件
+
+### 权重下载与 SD 2.1 初始化
+
+在已激活 `top2pano` 的交互式计算节点内执行。SAM 使用官方的 SAM 1 ViT-H：
+
+```bash
+mkdir -p models/sam
+wget -c -O models/sam/sam_vit_h_4b8939.pth \
+  https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+```
+
+来源：[SAM 官方 checkpoint 清单](https://github.com/facebookresearch/segment-anything#model-checkpoints)。
+`--sam-model vit_h` 必须与这个文件匹配。
+
+`control_sd21_ini.ckpt` 按 [ControlNet 官方 SD 2.1 初始化说明](https://github.com/lllyasviel/ControlNet/blob/main/docs/train.md)
+由 **SD 2.1 512-base** 生成。原 Stability AI 地址在本次检查返回 401；以下使用明确标注的
+[sd2-community 存档文件](https://huggingface.co/sd2-community/stable-diffusion-2-1-base/blob/main/v2-1_512-ema-pruned.ckpt)，
+并核对存档页公布的 SHA256：
+
+```bash
+wget -c -O models/v2-1_512-ema-pruned.ckpt \
+  https://huggingface.co/sd2-community/stable-diffusion-2-1-base/resolve/main/v2-1_512-ema-pruned.ckpt
+
+printf '%s  %s\n' \
+  88ecb782561455673c4b78d05093494b9c539fc6bfc08f3a9a4a0dd7b0b10f36 \
+  models/v2-1_512-ema-pruned.ckpt | sha256sum -c -
+
+python scripts/init_control_sd21.py \
+  --input models/v2-1_512-ema-pruned.ckpt \
+  --output models/control_sd21_ini.ckpt
+```
+
+本地工具遵循 [官方 `tool_add_control_sd21.py`](https://github.com/lllyasviel/ControlNet/blob/main/tool_add_control_sd21.py)
+的参数复制规则：将对应 SD UNet 参数复制到 ControlNet，其他可匹配参数同名复制，新层保留
+本仓库模型的初始化。它增加 CPU 加载、shape 检查和来源/输出 SHA256 receipt，不改变模型。
+`first_stage_model.decoder.depth_map.*` 等 Top2Pano 新层的初始化会在报告中列出。
+
+初始化在 CPU 上完成，输入模型约 5.21 GB，生成文件和 OpenCLIP 缓存也占用数 GB。
+首次模型创建可能自动下载原 OpenCLIP 资源，建议在能联网且 CPU 内存充足的节点执行。
+成功后得到 `models/control_sd21_ini.ckpt` 和 `models/control_sd21_ini.json`，训练配置无需改动。
 
 先提供下载好的 SAM checkpoint；配置的初始化模型文件也需单独提供。
 本实现不伪造 segmentation、不使用 GT semantic，也不静默降级为全零条件。
@@ -89,8 +201,16 @@ configuration 无交集，并检查新 BEV 标定的坐标往返一致性。
 ```bash
 python scripts/prepare_mvwd.py --mode sam \
   --splits train --scene Rs_int --max-episodes 2 \
-  --sam-model vit_h --sam-checkpoint /path/to/sam_vit_h.pth
+  --sam-model vit_h --sam-checkpoint models/sam/sam_vit_h_4b8939.pth
 ```
+
+SAM 小子集准备完成后，在同一个 shell 检查完整 adapter sample 和 segmentation：
+
+```bash
+python scripts/inspect_mvwd.py --scene Rs_int --load-query
+```
+
+`--load-query` 只读取已有 SAM 缓存，不运行 SAM 网络；该检查不需要 GPU。
 
 这是原方法的 class-free segmentation conditioning。仓库没有提供原 `_seg.png` 的生成
 脚本，因此此处补充 `SamAutomaticMaskGenerator`：在 letterbox 后的输入 RGB 上生成 masks，
@@ -123,7 +243,7 @@ python scripts/prepare_mvwd.py --mode views \
 
 准备 `models/control_sd21_ini.ckpt`，或修改配置里的 `model.init_checkpoint`；该文件像原
 `main.py` 一样分别初始化两个 stage。CLIP 按原 model config 使用其预训练资源。
-先运行小样本：
+在同一个交互式 GPU shell 先运行小样本：
 
 ```bash
 python train_mvwd.py --scene Rs_int --max-episodes 2 \
@@ -142,6 +262,8 @@ SAM 配方和初始化 checkpoint SHA256，以及 split/dataset 元数据副本�
 或几何视频作为输入条件。
 
 ## 第五步：独立推理
+
+准备好选定 split/episode 对应的 SAM 缓存后，在同一个交互式 GPU shell 内执行：
 
 ```bash
 python infer_mvwd.py \
@@ -163,8 +285,10 @@ mask 或新增评价协议。输入中若不包含机器人，它们出现于 GT
 
 ## 验证范围
 
+测试也在上述交互式计算节点内直接运行：
+
 ```bash
-python -m pytest -q tests
+PYTHONDONTWRITEBYTECODE=1 ~/.venvs/top2pano-level1/bin/python -m pytest -q -p no:cacheprovider tests
 ```
 
 测试覆盖标定/像素中心/FoV、实际 modality pose、GT-free adapter、depth 注册、scene

@@ -15,4 +15,8 @@ build/
 .vscode/
 
 # Derived MVWD data, generated previews and training checkpoints
-artifacts/
+/artifacts
+models/*.ckpt
+models/*.ckpt.tmp
+models/control_sd21_ini.json
+models/sam/

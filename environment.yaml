@@ -1,3 +1,4 @@
+# Upstream historical environment; current HoreKa-2 MVWD uses environment_mvwd.yaml.
 name: top2pano
 channels:
   - pytorch

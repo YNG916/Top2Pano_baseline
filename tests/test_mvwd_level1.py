@@ -1,5 +1,5 @@
 import json
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ import torch
 from torch.utils.data._utils.collate import default_collate
 
 from adapters.mvwd_level1 import MVWDLevel1, letterbox_bev, scale_intrinsics
-from adapters.mvwd_raw import MVWDRaw, cache_key, sha256_file
+from adapters.mvwd_raw import MVWDRaw, cache_key, sha256_file, within
 from mvwd_runtime import align_depth_to_rgb, original_batch
 
 
@@ -127,6 +127,22 @@ def test_configuration_payload_identity_is_not_collapsed():
     a = {"configuration_path": "data/source_a", "configuration_id": "same"}
     b = {"configuration_path": "data/source_b", "configuration_id": "same"}
     assert cache_key(a, 0, 512) != cache_key(b, 0, 512)
+
+
+def test_root_path_validation_without_is_relative_to(tmp_path, monkeypatch):
+    root = tmp_path / "dataset"
+    root.mkdir()
+    outside = tmp_path / "dataset-outside"
+    outside.mkdir()
+    (root / "escape").symlink_to(outside, target_is_directory=True)
+    with monkeypatch.context() as legacy:
+        legacy.delattr(PurePath, "is_relative_to", raising=False)
+        assert within(root, "data/episode") == root / "data/episode"
+        with pytest.raises(ValueError, match="root-relative"):
+            within(root, outside)
+        for path in ("../dataset-outside", "escape/episode"):
+            with pytest.raises(ValueError, match="escapes"):
+                within(root, path)
 
 
 def test_resize_keeps_fov_with_corner_origin_intrinsics():

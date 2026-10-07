@@ -22,12 +22,16 @@ def sha256_file(path):
 
 
 def within(root, relative):
+    root = Path(root).resolve()
     relative = Path(relative)
     if relative.is_absolute():
         raise ValueError(f"Expected root-relative payload path: {relative}")
     path = (root / relative).resolve()
-    if not path.is_relative_to(root):
-        raise ValueError(f"Payload escapes dataset root: {relative}")
+    # relative_to also works on Python 3.8; resolve first to check symlinks.
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Payload escapes dataset root: {relative}") from exc
     return path
 
 
