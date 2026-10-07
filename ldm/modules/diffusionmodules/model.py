@@ -616,7 +616,7 @@ class Decoder(nn.Module):
                                         stride=1,
                                         padding=1)
         # init depth layer
-        self.depth_map = torch.nn.Conv2d(in_channels=128, out_channels=1, kernel_size=3, stride=1, padding=1).to('cuda')
+        self.depth_map = torch.nn.Conv2d(in_channels=128, out_channels=1, kernel_size=3, stride=1, padding=1)
 
     def forward(self, z, density_map):
         #assert z.shape[1:] == self.z_shape[1:]

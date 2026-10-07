@@ -1,0 +1,26 @@
+# Separate environment: keep environment.yaml and upstream algorithms intact.
+name: top2pano-mvwd
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.10
+  - pip<24.1  # Lightning 1.5 uses dependency metadata rejected by newer pip
+  - cudatoolkit=11.3
+  - pytorch=1.12.1
+  - torchvision=0.13.1
+  - numpy=1.23.1
+  - pillow>=9.1,<11
+  - pyyaml
+  - pip:
+      - pytorch-lightning==1.5.10
+      - torchmetrics==0.6.0
+      - omegaconf==2.1.1
+      - einops==0.3.0
+      - transformers==4.19.2
+      - open_clip_torch==2.0.2
+      - timm==0.6.12
+      - kornia==0.6
+      - segment-anything==1.0
+      - tensorboard<2.17
+      - pytest>=7,<9

@@ -1,0 +1,55 @@
+# Paths can be overridden from the CLI; no import of the dataset's mvwd.py.
+data:
+  root: ../../multiview_ws/datasets/MultiViewWorldDataset_v1
+  segmentation_root: artifacts/mvwd/sam
+  cache_root: artifacts/mvwd/cache
+  bev_size: 512
+  target_size: [256, 448]  # H, W; identical FoV to 512 x 896 targets
+  robots: [0, 1, 2]
+  frame_stride: 1
+  wall_prior: rgb_black   # Original RGB-dark heuristic; padding is excluded
+model:
+  config: models/cldm_v21.yaml
+  init_checkpoint: models/control_sd21_ini.ckpt
+  sd_locked: true
+  only_mid_control: false
+renderer:
+  samples: 150
+  chunk_rays: 2048
+  max_height_m: 3.0
+  density_scale: 10.0
+  rgb_distance_normalized: 0.8
+training:
+  learning_rate: 1.0e-5
+  batch_size: 1
+  num_workers: 0
+  max_epochs: 1          # Smoke run; set the formal experiment budget explicitly
+  accumulate_grad_batches: 1
+  seed: 42
+  accelerator: gpu
+  devices: 1
+  precision: 32
+  output_dir: artifacts/mvwd/runs/level1
+inference:
+  ddim_steps: 50
+  guidance_scale: 9.0
+  seed: 42
+prompts:
+  occupancy: >-
+    Using an indoor top-down view image and its corresponding segmentation as
+    the condition input, learn the complete geometric structure of the room
+    based on this view to generate a voxel representation of the space. The
+    segmentation helps distinguish between the floor and furniture, enabling
+    the model to capture the overall room layout, as well as the shape,
+    position, and spatial relationships of objects and walls. By leveraging
+    both the visual and structural cues from the segmentation, the model can
+    achieve a more precise reconstruction of the room's geometric structure
+    from the top-down perspective, ensuring accurate height estimation and
+    detailed object representation.
+  refinement: >-
+    An ultra-high-definition perspective indoor scene. Using the provided
+    coarse depth map and coarse color image as conditions, please reconstruct
+    the room's structure and generate both a high-quality perspective RGB
+    image and a refined depth map of the indoor space. Ensure that the
+    generated outputs maintain the same structure as the coarse depth map,
+    while preserving the correct colors of the floor and furniture.

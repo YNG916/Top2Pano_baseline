@@ -206,6 +206,15 @@ def compositie_depth(batch,BS, density_samples,depth_samples,intv):
 
 def density_map(batch):
 
+    if batch.get('dataset_name', [''])[0] == 'mvwd':
+        # The original density decoder and losses stay in ddpm.py. Only the
+        # camera model/map calibration and output layout change for MVWD.
+        from adapters.camera_geometry import PerspectiveRenderer
+        renderer = PerspectiveRenderer(**batch['perspective_renderer_config'])
+        output = renderer(batch['voxel'], batch)
+        batch['coarse_depth_z'] = output['depth_z']
+        return output['rgb'], output['depth_condition'].unsqueeze(1)
+
     pano_direction = get_original_coord(batch)
     pano_direction = torch.from_numpy(pano_direction).to('cuda')
     for i in range(batch['voxel'].shape[0]):

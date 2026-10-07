@@ -13,3 +13,6 @@ build/
 # IDE
 .idea/
 .vscode/
+
+# Derived MVWD data, generated previews and training checkpoints
+artifacts/

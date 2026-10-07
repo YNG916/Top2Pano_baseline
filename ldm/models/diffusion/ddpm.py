@@ -972,9 +972,10 @@ class LatentDiffusion(DDPM):
         density_voxel = self.decode_first_stage(x_start,density_map=True)
         batch['voxel'] = density_voxel
         render_image, render_depth = density_map(batch)
-        render_image = torch.rot90(render_image, k=-1, dims=(1,2))
-        render_image = torch.flip(render_image, dims=[3])
-        render_depth = torch.flip(render_depth, dims=[3])
+        if batch['dataset_name'][0] != 'mvwd':
+            render_image = torch.rot90(render_image, k=-1, dims=(1,2))
+            render_image = torch.flip(render_image, dims=[3])
+            render_depth = torch.flip(render_depth, dims=[3])
         render_depth = render_depth.repeat(1, 3, 1, 1)
         render_depth = render_depth.permute(0, 2, 3, 1)
 
