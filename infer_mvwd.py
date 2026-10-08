@@ -13,6 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(REPO / "configs/mvwd_level1.yaml"))
     parser.add_argument("--root")
+    parser.add_argument("--robot-assets")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--split", choices=("train", "val", "test"), default="test")
     parser.add_argument("--scene", action="append")
@@ -25,9 +26,13 @@ def main():
     config = load_config(args.config)
     if args.root:
         config["data"]["root"] = str(Path(args.root).expanduser().resolve())
+    if args.robot_assets:
+        config["data"]["robot_assets_root"] = str(Path(args.robot_assets).expanduser().resolve())
     dataset = make_dataset(config, args.split, include_targets=False, scenes=args.scene,
                            max_episodes=args.max_episodes, frames=args.frames, robots=args.robots)
-    dataset[0]  # Check the segmentation cache before model allocation.
+    dataset[0]  # Check SAM and robot states before model allocation.
+    if dataset.robot_assets is not None:
+        config["robot_asset_provenance"] = dataset.robot_assets.provenance()
     import numpy as np
     import torch
     from PIL import Image
@@ -42,6 +47,7 @@ def main():
     settings = config["inference"]
     metadata = {"method": "Top2Pano-Persp", "dataset": dataset.provenance(), "config": config,
                 "checkpoint_sha256": sha256_file(args.checkpoint), "ground_truth_loaded": False,
+                "robot_conditioning": dataset.robot_assets is not None,
                 "seed_policy": "sha256(base_seed, release_id, episode_id, robot_id, frame_index)"}
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     key, voxel = None, None
@@ -67,8 +73,9 @@ def main():
             destination = directory / f"frame_{sample['frame_index']:03d}.png"
             pixels = ((image[0].permute(1, 2, 0).cpu().numpy() + 1) * 127.5).clip(0, 255).astype(np.uint8)
             Image.fromarray(pixels).save(destination)
-            np.savez_compressed(destination.with_suffix(".coarse.npz"),
-                                rgb=coarse["rgb"][0].cpu().numpy(), depth_z=coarse["depth_z"][0].cpu().numpy())
+            saved = {name: coarse[name][0].cpu().numpy() for name in
+                     ("rgb", "depth_z", "robot_id", "robot_weight", "robot_depth_z") if name in coarse}
+            np.savez_compressed(destination.with_suffix(".coarse.npz"), **saved)
             manifest.write(json.dumps({"episode_id": sample["episode_id"], "robot_id": sample["robot_id"],
                                        "frame_index": sample["frame_index"], "seed": seed,
                                        "path": str(destination.relative_to(output))}) + "\n")

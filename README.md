@@ -1,6 +1,6 @@
 # Top2Pano: Learning to Generate Indoor Panoramas from Top-Down View
 
-MVWD Level 1 perspective adaptation and HoreKa-2 interactive GPU debugging:
+MVWD Level 1 perspective adaptation with known textured robot assets and HoreKa-2 interactive GPU debugging:
 [README_MVWD_LEVEL1.md](README_MVWD_LEVEL1.md).
 
 For the current MVWD/HoreKa-2 setup use `environment_mvwd.yaml`. The setup,

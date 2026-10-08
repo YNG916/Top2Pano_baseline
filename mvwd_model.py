@@ -48,6 +48,17 @@ class CombinedMVWDModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self._step(batch, "val")
 
+    def on_load_checkpoint(self, checkpoint):
+        saved = checkpoint.get("hyper_parameters", {}).get("config", {})
+        enabled = bool(self.config.get("data", {}).get("robot_rendering", False))
+        previous = bool(saved.get("data", {}).get("robot_rendering", False))
+        if enabled != previous:
+            raise ValueError("Checkpoint robot conditioning differs from current config; train a new robot run from initialization")
+        current = self.config.get("robot_asset_provenance", {}).get("manifest_sha256")
+        old = saved.get("robot_asset_provenance", {}).get("manifest_sha256")
+        if enabled and (not current or current != old):
+            raise ValueError("Checkpoint robot asset manifest differs from the current bundle")
+
     def configure_optimizers(self):
         # Retain the optimizer and parameter selection in upstream main.py.
         return torch.optim.Adam(list(self.density_model.parameters()) + list(self.render_model.parameters()),
@@ -80,5 +91,6 @@ class CombinedMVWDModel(pl.LightningModule):
 def load_trained(config, path):
     model = CombinedMVWDModel(config, initialize=False)
     checkpoint = torch.load(path, map_location="cpu")
+    model.on_load_checkpoint(checkpoint)
     model.load_state_dict(checkpoint.get("state_dict", checkpoint), strict=True)
     return model

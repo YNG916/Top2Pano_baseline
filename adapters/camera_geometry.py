@@ -32,7 +32,7 @@ def relative_map(values, valid=None):
 
 class PerspectiveRenderer:
     def __init__(self, samples=150, chunk_rays=2048, max_height_m=3.0,
-                 density_scale=10.0, rgb_distance_normalized=0.8):
+                 density_scale=10.0, rgb_distance_normalized=0.8, robot_rendering=False):
         if samples <= 0 or chunk_rays <= 0 or max_height_m <= 0 or density_scale <= 0 or rgb_distance_normalized <= 0:
             raise ValueError("Renderer dimensions and scales must be positive")
         self.samples = samples
@@ -40,6 +40,7 @@ class PerspectiveRenderer:
         self.max_height_m = max_height_m
         self.density_scale = density_scale
         self.rgb_distance_normalized = rgb_distance_normalized
+        self.robot_rendering = bool(robot_rendering)
 
     def prepare_density(self, voxel, valid, wall_mask):
         # Retain the original hidden-channel vertical volume, density scaling,
@@ -51,8 +52,9 @@ class PerspectiveRenderer:
         return torch.cat((floors, sigma), dim=1)
 
     def _integrate(self, sigma, color, origin, directions, camera_z, w2p,
-                   floor_z, near, far, half_extent, height, width):
+                   floor_z, near, far, half_extent, height, width, surfaces=None):
         outputs_rgb, outputs_depth, outputs_opacity = [], [], []
+        robot_weights, scene_rgb = [], []
         batch, _, map_h, map_w = sigma.shape
         fractions = (torch.arange(self.samples, device=sigma.device, dtype=sigma.dtype) + 1) / self.samples
         distances = near[:, None] + (far - near)[:, None] * fractions
@@ -63,7 +65,16 @@ class PerspectiveRenderer:
         for start in range(0, height * width, self.chunk_rays):
             end = min(start + self.chunk_rays, height * width)
             rays = directions[:, start:end]
-            points = origin[:, None, None, :] + rays[:, :, None, :] * distances[:, None, :, None]
+            ray_distances = distances[:, None, :].expand(-1, end - start, -1)
+            if surfaces is not None:
+                hit_distance = surfaces["distance"][:, start:end]
+                hit = torch.isfinite(hit_distance) & (hit_distance <= far[:, None])
+                cutoff = torch.where(hit, hit_distance, far[:, None])
+                ray_distances = torch.minimum(ray_distances, cutoff[..., None])
+                # Integrate only environment in front of the opaque surface.
+                left = distances - ((far - near) / self.samples)[:, None]
+                ray_intervals = (ray_distances - left[:, None, :]).clamp_min(0) / half_extent[:, None, None]
+            points = origin[:, None, None, :] + rays[:, :, None, :] * ray_distances[..., None]
             homogeneous = torch.cat((points, torch.ones_like(points[..., :1])), dim=-1)
             pixels = torch.einsum("bij,brsj->brsi", w2p, homogeneous)
             xy = torch.stack((2 * (pixels[..., 0] + 0.5) / map_w - 1,
@@ -74,18 +85,33 @@ class PerspectiveRenderer:
                                     padding_mode="zeros")[:, 0, :, 0, :].transpose(1, 2)
             colors = F.grid_sample(color_volume, grid, align_corners=False,
                                    padding_mode="zeros")[:, :, :, 0, :].permute(0, 3, 2, 1)
-            optical = density * intervals
+            optical = density * (intervals if surfaces is None else ray_intervals)
             transmittance = torch.exp(-F.pad(optical[..., :-1].cumsum(dim=-1), (1, 0)))
             weights = transmittance * (-torch.expm1(-optical))
-            outputs_rgb.append((weights[..., None] * colors).sum(dim=2))
-            distance = (weights * distances[:, None, :]).sum(dim=-1)
+            environmental_rgb = (weights[..., None] * colors).sum(dim=2)
+            distance = (weights * ray_distances).sum(dim=-1)
+            opacity = weights.sum(dim=-1)
+            if surfaces is not None:
+                visibility = torch.exp(-optical.sum(dim=-1)) * hit.to(optical.dtype)
+                surface_color = surfaces["rgb"][:, start:end] * 2 - 1
+                # No GT visibility/depth: predicted density determines attenuation.
+                distance = distance + visibility * torch.where(hit, hit_distance, torch.zeros_like(hit_distance))
+                opacity = opacity + visibility
+                robot_weights.append(visibility)
+                scene_rgb.append(environmental_rgb)
+                environmental_rgb = environmental_rgb + visibility[..., None] * surface_color
+            outputs_rgb.append(environmental_rgb)
             outputs_depth.append(distance * camera_z[:, start:end])
-            outputs_opacity.append(weights.sum(dim=-1))
-        return {
+            outputs_opacity.append(opacity)
+        output = {
             "rgb": torch.cat(outputs_rgb, dim=1).reshape(batch, height, width, 3),
             "depth_z": torch.cat(outputs_depth, dim=1).reshape(batch, height, width),
             "opacity": torch.cat(outputs_opacity, dim=1).reshape(batch, height, width),
         }
+        if surfaces is not None:
+            output["robot_weight"] = torch.cat(robot_weights, dim=1).reshape(batch, height, width)
+            output["scene_rgb"] = torch.cat(scene_rgb, dim=1).reshape(batch, height, width, 3)
+        return output
 
     def __call__(self, voxel, batch, *, modality="rgb", prepared=False):
         if modality not in ("rgb", "depth"):
@@ -102,6 +128,10 @@ class PerspectiveRenderer:
             height, width = batch["target_depth_z"].shape[-2:]
         K, T = tensor("K_" + modality), tensor("T_wc_" + modality)
         origin, directions, camera_z = pinhole_rays(K, T, height, width)
+        surfaces = None
+        if self.robot_rendering:
+            from .robot_assets import robot_surfaces
+            surfaces = robot_surfaces(batch, origin, directions)
         p2w = tensor("bev_to_world")
         half_extent = torch.linalg.vector_norm(p2w[:, :3, 0], dim=1) * sigma.shape[-1] / 2
         near, far = tensor("near_m").reshape(-1), tensor("far_m").reshape(-1)
@@ -109,12 +139,23 @@ class PerspectiveRenderer:
         source_color = tensor("bev_rgb") * 2.0 - 1.0
         full = self._integrate(sigma, source_color, origin, directions, camera_z,
                                tensor("world_to_bev"), tensor("floor_z").reshape(-1),
-                               near, far, half_extent, height, width)
+                               near, far, half_extent, height, width, surfaces)
         if modality == "rgb":
             rgb_far = torch.minimum(far, half_extent * self.rgb_distance_normalized).clamp_min(near + 1e-3)
             cropped = self._integrate(sigma, source_color, origin, directions, camera_z,
                                       tensor("world_to_bev"), tensor("floor_z").reshape(-1),
-                                      near, rgb_far, half_extent, height, width)
-            full["rgb"] = relative_map(cropped["rgb"])
+                                      near, rgb_far, half_extent, height, width, surfaces)
+            if surfaces is None:
+                full["rgb"] = relative_map(cropped["rgb"])
+            else:
+                # Retain the original short-range environment colors. Robots
+                # remain visible throughout near/far, with full-range occlusion.
+                surface_color = surfaces["rgb"].reshape(len(voxel), height, width, 3) * 2 - 1
+                full["rgb"] = relative_map(cropped["scene_rgb"] + full["robot_weight"][..., None] * surface_color)
+        if surfaces is not None:
+            full.pop("scene_rgb")
+            full["robot_id"] = surfaces["id"].reshape(len(voxel), height, width)
+            depth = surfaces["distance"] * camera_z
+            full["robot_depth_z"] = torch.where(torch.isfinite(depth), depth, torch.zeros_like(depth)).reshape(len(voxel), height, width)
         full["depth_condition"] = relative_map(full["depth_z"])
         return full

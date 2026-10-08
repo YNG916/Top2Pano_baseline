@@ -1,0 +1,3 @@
+# Python 3.8-compatible wheels; do not upgrade the original model stack.
+trimesh==4.5.3
+embreex==2.17.7

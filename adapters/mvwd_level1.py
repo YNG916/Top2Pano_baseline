@@ -42,7 +42,8 @@ class MVWDLevel1:
     def __init__(self, root, split="train", *, bev_size=512, target_size=(256, 448),
                  robots=(0, 1, 2), frame_stride=1, frames=None, scenes=None,
                  max_episodes=None, segmentation_root=None, cache_root=None,
-                 include_targets=True, include_depth=True, wall_prior="rgb_black"):
+                 include_targets=True, include_depth=True, wall_prior="rgb_black",
+                 robot_rendering=False, robot_assets_root=None):
         self.raw = MVWDRaw(root, split, scenes, max_episodes)
         self.bev_size = int(bev_size)
         self.target_size = tuple(map(int, target_size))
@@ -62,6 +63,12 @@ class MVWDLevel1:
         self.include_depth = include_depth and include_targets
         self._processed_cache = OrderedDict()
         self._segmentation_cache = OrderedDict()
+        self.robot_assets = None
+        if robot_rendering:
+            from .robot_assets import RobotAssets
+            self.robot_assets = RobotAssets(robot_assets_root or self.raw.root / "robot_assets/MVWD_RobotAssets_v1")
+            for record in self.raw.records:
+                self.robot_assets.check_fingerprint(record)
         self._frames, self._ends = [], []
         total = 0
         for record in self.raw.records:
@@ -112,8 +119,8 @@ class MVWDLevel1:
             self.raw._remember(self._segmentation_cache, key, segmentation, 2)
         segmentation = self._segmentation_cache[key]
         camera = self.raw.camera(record, robot, frame)
-        poses = camera.get("modality_camera_to_world", {})
-        T = np.asarray(poses.get("rgb", camera["camera_to_world"]), dtype=np.float64)
+        camera_poses = camera.get("modality_camera_to_world", {})
+        T = np.asarray(camera_poses.get("rgb", camera["camera_to_world"]), dtype=np.float64)
         K = scale_intrinsics(np.asarray(camera["pixel_intrinsics"], dtype=np.float64),
                              (camera["height"], camera["width"]), self.target_size)
         walls = valid & np.all(rgb <= 5, axis=-1) if self.wall_prior == "rgb_black" else np.zeros_like(valid)
@@ -130,6 +137,15 @@ class MVWDLevel1:
             "T_wc_rgb": T.astype(np.float32), "target_hw": np.asarray(self.target_size, dtype=np.int64),
             "near_m": np.float32(camera["near_m"]), "far_m": np.float32(camera["far_m"]),
         }
+        if self.robot_assets is not None:
+            robot_poses, heights = self.raw.robot_states(record, frame)
+            from .robot_assets import rigid_transform
+            for pose in robot_poses:
+                rigid_transform(pose)
+            heights = np.asarray([self.robot_assets.nominal_height(h) for h in heights], dtype=np.float32)
+            sample.update(robot_T_wb=robot_poses.astype(np.float32), robot_camera_heights=heights,
+                          robot_ids=np.arange(record["robots"], dtype=np.int64),
+                          robot_assets_root=str(self.robot_assets.root))
         if self.include_targets:
             modalities = ("rgb", "depth_linear") if self.include_depth else ("rgb",)
             arrays = self.raw.views(record, robot, modalities, self.cache_root)
@@ -141,7 +157,7 @@ class MVWDLevel1:
                 sample["target_depth_z"] = depth
                 sample["depth_valid"] = np.isfinite(depth) & (depth > 0) & (depth <= camera["far_m"])
                 sample["K_depth"] = np.asarray(camera["geometry_pixel_intrinsics"], dtype=np.float32)
-                sample["T_wc_depth"] = np.asarray(poses.get("depth_linear", camera["camera_to_world"]), dtype=np.float32)
+                sample["T_wc_depth"] = np.asarray(camera_poses.get("depth_linear", camera["camera_to_world"]), dtype=np.float32)
         return sample
 
     def provenance(self):
@@ -149,4 +165,6 @@ class MVWDLevel1:
                 "frame_selections": [list(frames) for frames in sorted(set(self._frames))],
                 "episode_ids": [record["id"] for record in self.raw.records], "bev_size": self.bev_size,
                 "target_size": self.target_size, "wall_prior": self.wall_prior,
-                "include_depth": self.include_depth}
+                "include_depth": self.include_depth,
+                "robot_rendering": self.robot_assets is not None,
+                "robot_assets": self.robot_assets.provenance() if self.robot_assets is not None else None}

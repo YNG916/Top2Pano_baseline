@@ -28,6 +28,20 @@ __conditioning_keys__ = {'concat': 'c_concat',
                          'adm': 'y'}
 
 
+def compute_color_histogram(tensor, bins=256):
+    """Upstream batch/channel histogram, with a defined empty-range result.
+
+    Preserve the original [0, 1] range and counts for nonempty histograms.
+    A decoded channel can contain no values in that range; return zeros
+    instead of dividing its all-zero counts by zero. histc stays non-differentiable.
+    """
+    histograms = []
+    for channel in range(tensor.shape[-1]):
+        hist = torch.histc(tensor[..., channel], bins=bins, min=0, max=1)
+        histograms.append(hist / hist.sum().clamp_min(1))
+    return torch.stack(histograms, dim=-1)
+
+
 def disabled_train(self, mode=True):
     """Overwrite model.train with this function to make sure train/eval mode
     does not change anymore."""
@@ -933,17 +947,6 @@ class LatentDiffusion(DDPM):
         loss = loss + loss_depth.mean()
         loss_dict.update({f'{prefix}/loss_depth': loss_depth.mean()})
         render_image = render_image[:, :3, :, :]
-
-        def compute_color_histogram(tensor, bins=256):
-            B, W, H, C = tensor.shape
-            histograms = []
-            for c in range(C):
-                hist = torch.histc(tensor[..., c], bins=bins, min=0, max=1)
-                hist = hist / hist.sum()
-                histograms.append(hist)
-
-            histograms = torch.stack(histograms, dim=-1)
-            return histograms
 
         # color loss function
         color_image = render_image.permute(0, 2, 3, 1)

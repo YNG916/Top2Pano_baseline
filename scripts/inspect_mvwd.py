@@ -19,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(REPO / "configs/mvwd_level1.yaml"))
     parser.add_argument("--root")
+    parser.add_argument("--robot-assets")
     parser.add_argument("--split", choices=("train", "val", "test"), default="train")
     parser.add_argument("--scene", action="append")
     parser.add_argument("--index", type=int, default=0, help="Episode index within selected split")
@@ -28,6 +29,8 @@ def main():
     config = load_config(args.config)
     if args.root:
         config["data"]["root"] = str(Path(args.root).expanduser().resolve())
+    if args.robot_assets:
+        config["data"]["robot_assets_root"] = str(Path(args.robot_assets).expanduser().resolve())
     records = {split: MVWDRaw(config["data"]["root"], split) for split in ("train", "val", "test")}
     report = {"splits": {split: {"episodes": len(raw.records), "scenes": len({r['scene'] for r in raw.records})}
                          for split, raw in records.items()}, "overlaps": {}}

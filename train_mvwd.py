@@ -11,6 +11,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(REPO / "configs/mvwd_level1.yaml"))
     parser.add_argument("--root")
+    parser.add_argument("--robot-assets")
     parser.add_argument("--scene", action="append", help="Train scene filter for debugging; split unchanged")
     parser.add_argument("--max-episodes", type=int)
     parser.add_argument("--frame-stride", type=int)
@@ -21,6 +22,8 @@ def main():
     config = load_config(args.config)
     if args.root:
         config["data"]["root"] = str(Path(args.root).expanduser().resolve())
+    if args.robot_assets:
+        config["data"]["robot_assets_root"] = str(Path(args.robot_assets).expanduser().resolve())
     if not args.resume and not Path(config["model"]["init_checkpoint"]).is_file():
         parser.error(f"Missing initialization checkpoint: {config['model']['init_checkpoint']}")
     train = make_dataset(config, "train", scenes=args.scene, max_episodes=args.max_episodes,
@@ -32,6 +35,8 @@ def main():
         datasets.append(validation)
     # Fail on missing SAM cache before allocating the two diffusion networks.
     train[0]
+    if train.robot_assets is not None:
+        config["robot_asset_provenance"] = train.robot_assets.provenance()
     if validation is not None:
         validation[0]
     import torch

@@ -72,6 +72,7 @@ class MVWDRaw:
         self._camera_cache = OrderedDict()
         self._view_cache = OrderedDict()
         self._floor_cache = {}
+        self._trajectory_cache = OrderedDict()
 
     @staticmethod
     def _remember(cache, key, value, limit):
@@ -113,6 +114,18 @@ class MVWDRaw:
             cameras = {(o["robot_id"], int(o["physical_time_index"])): o["camera"] for o in observations}
             self._remember(self._camera_cache, key, cameras, 8)
         return self._camera_cache[key][(f"robot_{robot:02d}", frame)]
+
+    def robot_states(self, record, frame):
+        """All planned base poses at this frame, independent of target selection."""
+        key = record["id"]
+        if key not in self._trajectory_cache:
+            with np.load(self.episode_path(record) / "trajectories.npz", allow_pickle=False) as packet:
+                poses = np.stack([packet[f"robot_{r:02d}_base_to_world"] for r in range(record["robots"])])
+            if poses.shape != (record["robots"], record["frames"], 4, 4) or not np.isfinite(poses).all():
+                raise ValueError("Invalid planned robot base trajectory")
+            self._remember(self._trajectory_cache, key, poses, 8)
+        heights = [self.camera(record, r, frame)["camera_height_m"] for r in range(record["robots"])]
+        return self._trajectory_cache[key][:, frame].copy(), np.asarray(heights, dtype=np.float32)
 
     def views(self, record, robot, modalities=("rgb", "depth_linear"), cache_root=None):
         path = self.episode_path(record) / "robot_views/before" / f"robot_{robot:02d}.npz"

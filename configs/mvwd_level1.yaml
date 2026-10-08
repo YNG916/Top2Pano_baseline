@@ -7,6 +7,8 @@ data:
   target_size: [256, 448]  # H, W; identical FoV to 512 x 896 targets
   robots: [0, 1, 2]
   frame_stride: 1
+  robot_rendering: true
+  robot_assets_root: null  # Defaults to <data.root>/robot_assets/MVWD_RobotAssets_v1
   wall_prior: rgb_black   # Original RGB-dark heuristic; padding is excluded
 model:
   config: models/cldm_v21.yaml
@@ -19,6 +21,7 @@ renderer:
   max_height_m: 3.0
   density_scale: 10.0
   rgb_distance_normalized: 0.8
+  robot_rendering: true
 training:
   learning_rate: 1.0e-5
   batch_size: 1
@@ -29,7 +32,7 @@ training:
   accelerator: gpu
   devices: 1
   precision: 32
-  output_dir: artifacts/mvwd/runs/level1
+  output_dir: artifacts/mvwd/runs/level1_robots
 inference:
   ddim_steps: 50
   guidance_scale: 9.0

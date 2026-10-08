@@ -14,7 +14,7 @@ def load_config(path):
     path = Path(path).expanduser().resolve()
     config = yaml.safe_load(path.read_text())
     # All relative paths in the shipped config are relative to this repository.
-    for group, names in (("data", ("root", "segmentation_root", "cache_root")),
+    for group, names in (("data", ("root", "segmentation_root", "cache_root", "robot_assets_root")),
                          ("model", ("config", "init_checkpoint")),
                          ("training", ("output_dir",))):
         for name in names:
@@ -22,6 +22,8 @@ def load_config(path):
             if value:
                 value = Path(value).expanduser()
                 config[group][name] = str((REPO / value).resolve() if not value.is_absolute() else value)
+    if bool(config["data"].get("robot_rendering", False)) != bool(config["renderer"].get("robot_rendering", False)):
+        raise ValueError("data.robot_rendering and renderer.robot_rendering must agree")
     return config
 
 
@@ -102,10 +104,12 @@ def write_run_metadata(directory, config, datasets):
     from adapters.mvwd_raw import sha256_file
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    metadata = {"method": "Top2Pano-Persp", "implementation": "original-code-losses-v1",
+    metadata = {"method": "Top2Pano-Persp", "implementation": "original-code-losses-robot-assets-v1",
                 "config": config, "datasets": [ds.provenance() for ds in datasets],
+                "numerical_guards": ["empty [0,1] color histogram returns zeros; nonempty histograms unchanged"],
                 "changes": ["baseline-owned raw adapter", "calibrated perspective renderer",
-                            "depth label registration", "non-square output layout"],
+                            "depth label registration", "non-square output layout",
+                            "known textured robot meshes in coarse RGB/depth"],
                 "retained_code_behavior": ["density loss is not added by CombinedModel",
                                            "density decoded from encoded BEV x_start under no_grad",
                                            "histc color loss is non-differentiable",

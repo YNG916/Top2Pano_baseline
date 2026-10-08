@@ -6,7 +6,11 @@ import torch
 import yaml
 
 
-def test_original_losses_backward_and_gt_free_refinement(tmp_path):
+from tests.test_robot_rendering import robot_bundle
+
+
+@pytest.mark.parametrize("with_robots", [False, True])
+def test_original_losses_backward_and_gt_free_refinement(tmp_path, robot_bundle, with_robots):
     pytest.importorskip("pytorch_lightning")
     pytest.importorskip("torchvision")
     pytest.importorskip("omegaconf")
@@ -32,6 +36,11 @@ def test_original_losses_backward_and_gt_free_refinement(tmp_path):
     config = {"model": {"config": str(model_config), "sd_locked": True, "only_mid_control": False},
               "training": {"learning_rate": 1e-5}, "renderer": {"samples": 8, "chunk_rays": 1024},
               "prompts": {"occupancy": "room geometry", "refinement": "perspective room"}}
+    if with_robots:
+        from adapters.robot_assets import RobotAssets
+        config["data"] = {"robot_rendering": True}
+        config["renderer"]["robot_rendering"] = True
+        config["robot_asset_provenance"] = RobotAssets(robot_bundle).provenance()
     model = CombinedMVWDModel(config, initialize=False)
     w2p = torch.tensor([[8., 0, 0, 31.5], [0, -8., 0, 31.5], [0, 0, 1., 0], [0, 0, 0, 1.]])[None]
     T = torch.tensor([[1., 0, 0, 0], [0, 0, 1., 0], [0, -1., 0, 1.2], [0, 0, 0, 1.]])[None]
@@ -44,6 +53,10 @@ def test_original_losses_backward_and_gt_free_refinement(tmp_path):
              "target_rgb": torch.rand(1, 64, 128, 3) * 2 - 1,
              "target_depth_z": torch.rand(1, 64, 128) + 1,
              "depth_valid": torch.ones(1, 64, 128, dtype=torch.bool)}
+    if with_robots:
+        pose = torch.eye(4)[None, None]; pose[0, 0, 1, 3] = 2.
+        batch.update(robot_assets_root=[str(robot_bundle)], robot_T_wb=pose,
+                     robot_camera_heights=torch.ones(1, 1), robot_ids=torch.zeros(1, 1, dtype=torch.long))
     loss = model.training_step(batch, 0)
     assert torch.isfinite(loss)
     loss.backward()
@@ -54,7 +67,7 @@ def test_original_losses_backward_and_gt_free_refinement(tmp_path):
     import pytorch_lightning as pl
     from pytorch_lightning.callbacks import ModelCheckpoint
     from torch.utils.data import DataLoader
-    loader = DataLoader([{key: value[0].clone() for key, value in batch.items()}], batch_size=1)
+    loader = DataLoader([{key: (value[0].clone() if isinstance(value, torch.Tensor) else value[0]) for key, value in batch.items()}], batch_size=1)
     callback = ModelCheckpoint(dirpath=str(tmp_path / "checkpoints"), monitor="val/total_loss",
                                save_top_k=1, save_last=True)
     trainer = pl.Trainer(accelerator="cpu", devices=1, max_steps=1, max_epochs=1,
@@ -70,7 +83,18 @@ def test_original_losses_backward_and_gt_free_refinement(tmp_path):
              if key not in ("target_rgb", "target_depth_z", "depth_valid", "K_depth", "T_wc_depth")}
     with torch.no_grad():
         volume = model.predict_occupancy(query["bev_rgb"])
-        coarse = PerspectiveRenderer(samples=8, chunk_rays=1024)(volume, query)
+        coarse = PerspectiveRenderer(samples=8, chunk_rays=1024, robot_rendering=with_robots)(volume, query)
         generated = model.refine(coarse["rgb"], coarse["depth_condition"], steps=4, guidance=2.)
     assert generated.shape == (1, 3, 64, 128)
     assert torch.isfinite(generated).all()
+
+
+def test_checkpoint_robot_protocol_mismatch_is_rejected():
+    from mvwd_model import CombinedMVWDModel
+    class Current:
+        config = {"data": {"robot_rendering": True}, "robot_asset_provenance": {"manifest_sha256": "current"}}
+    with pytest.raises(ValueError, match="conditioning differs"):
+        CombinedMVWDModel.on_load_checkpoint(Current(), {"hyper_parameters": {"config": {}}})
+    with pytest.raises(ValueError, match="manifest differs"):
+        CombinedMVWDModel.on_load_checkpoint(Current(), {"hyper_parameters": {"config": {
+            "data": {"robot_rendering": True}, "robot_asset_provenance": {"manifest_sha256": "old"}}}})
