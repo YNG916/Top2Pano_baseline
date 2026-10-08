@@ -1,5 +1,7 @@
 # Top2Pano: Learning to Generate Indoor Panoramas from Top-Down View
 
+后续实验统一使用 [实验目录与日志规范](README_EXPERIMENTS.md)；每个实验集中保存配置、命令、日志、checkpoint、预测和报告。本文中的直接脚本调用说明底层接口，旧 artifacts 路径仅供历史追溯。
+
 MVWD Level 1 perspective adaptation with known textured robot assets and HoreKa-2 interactive GPU debugging:
 [README_MVWD_LEVEL1.md](README_MVWD_LEVEL1.md).
 

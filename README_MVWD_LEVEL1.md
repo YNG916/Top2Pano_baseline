@@ -1,5 +1,7 @@
 # Top2Pano-Persp：MVWD Level 1
 
+后续实验统一使用 [实验目录与日志规范](README_EXPERIMENTS.md)；每个实验集中保存配置、命令、日志、checkpoint、预测和报告。本文中的直接脚本调用说明底层接口，旧 artifacts 路径仅供历史追溯。
+
 在本仓库内独立读取 `MultiViewWorldDataset_v1` 的 JSONL/JSON/NPZ，**不导入
 `mvwd.py`、consumer_tools 或 simulator/producer 包**。不重新采集或修改正式数据，不重划 splits。机器人资产的投影在 baseline 内完成。
 
@@ -49,6 +51,10 @@ variant，而不是悄悄改变这个版本。
 修复不重新缩放或截断颜色，不改变损失权重和网络，也不会为辅助项增加梯度。
 旧 checkpoint 的结构兼容，参数检查通过后可继续使用；旧日志中的 NaN 不会被改写。
 
+公开权重、初始化和实际更新参数已逐项核验，见 [权重与训练流程核验](README_UPSTREAM_AUDIT.md)。
+作者两个发布 checkpoint 未发现不同于原 SD 的 coarse VAE 权重；当前初始化的复制规则及
+完整文件 SHA256 均通过检查。
+
 ## 机器人如何进入生成链路
 
 默认配置的 `data.robot_rendering` 和 `renderer.robot_rendering` 均为 `true`。
@@ -84,6 +90,29 @@ variant，而不是悄悄改变这个版本。
 `models/control_sd21_ini.ckpt` 可直接复用。旧无机器人训练 checkpoint 不允许作为此版本的
 resume/inference checkpoint；加载时核对机器人条件开关和资产 manifest SHA256。旧实验
 若需复现，使用开关均为 `false` 的独立配置及原输出目录。
+
+## 固定 seed 的机器人条件诊断
+
+`scripts/diagnose_robot_conditions.py` 独立检查训练后模型的条件响应：固定 BEV、目标相机、
+geometry/query seed，比较原条件、移除其他机器人、沿相机水平右方向移动其他机器人、交换
+其他机器人的身份颜色。观察者自身的位姿、机体和相机保持原样；不修改训练或权重。
+
+例如，对已有带机器人 checkpoint 执行：
+
+```bash
+python scripts/diagnose_robot_conditions.py \
+  --config artifacts/mvwd/night_20261008/taskA/config.yaml \
+  --checkpoint artifacts/mvwd/night_20261008/taskA/run/checkpoints/last.ckpt \
+  --scene Rs_int --max-episodes 2 --robots 1 2 --frames 10 \
+  --guidances 1 9 --shift-m 0.75 \
+  --output artifacts/mvwd/condition_diagnostics/taskA/interventions_v2
+```
+
+输出目录必须不存在。保存原/反事实 coarse、最终 RGB、`sensitivity.json` 和完成标记。
+诊断不读取目标 RGB/depth，不对没有对应 GT 的反事实计算 PSNR/SSIM。像素变化只能证明
+数值条件敏感性，不能证明机器人数量、身份或运动正确；还需查看配对图。原 renderer 的
+全图 min/max 归一化可能让局部机器人变化影响全图条件，移动也未经过场景碰撞验证。
+本入口不用于正式 benchmark 的预测或选模。
 
 ## 文件与环境
 
