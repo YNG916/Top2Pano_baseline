@@ -39,7 +39,7 @@ class CombinedMVWDModel(pl.LightningModule):
         # total without changing the optimization objective.
         metrics[f"{prefix}/total_loss"] = loss.detach()
         self.log_dict(metrics, prog_bar=True, logger=True, on_step=prefix == "train",
-                      on_epoch=True, batch_size=len(batch["jpg"]))
+                      on_epoch=True, batch_size=len(batch["jpg"]), sync_dist=prefix == "val")
         return loss
 
     def training_step(self, batch, batch_idx):

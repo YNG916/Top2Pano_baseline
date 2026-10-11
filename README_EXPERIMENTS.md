@@ -102,6 +102,8 @@ python scripts/run_mvwd_experiment.py run YYYYMMDD_robots_smoke \
 | diagnose | diagnose_robot_conditions.py | diagnostics/步骤名 |
 | inspect | inspect_mvwd.py | diagnostics/步骤名 |
 | robots | inspect_robot_rendering.py | diagnostics/步骤名 |
+| nccl | check_nccl.py | diagnostics/步骤名（双卡通信核验） |
+| review | review_mvwd_predictions.py | evaluations/步骤名/metrics.json；对照图放 reports/步骤名 |
 | check | check_mvwd_checkpoint.py | evaluations/步骤名/checkpoint_finiteness.json |
 | sam / views | prepare_mvwd.py | 配置中的共享缓存；终端日志及配置快照归入实验 |
 
@@ -114,6 +116,26 @@ python scripts/run_mvwd_experiment.py run YYYYMMDD_robots_smoke \
 提交 Git 的是脚本、基础配置和说明；artifacts 默认不提交。实验目录位于 workspace，
 重要最终 checkpoint 和报告仍需按存储方案另做持久备份。
 
+## 全场景长训练与多卡
+
+基础配置：`configs/mvwd_level1_fullscene.yaml`（全部 train scenes、stride=10）。
+本轮命令、资源规格和续训方式见
+[全场景预实验执行说明](artifacts/mvwd/experiments/20261009_fullscene_pilot/reports/RUNBOOK.md)。
+
+`train_mvwd.py` 新增 `--devices`、`--batch-size`、`--max-epochs`、`--max-time auto`、
+`--checkpoint-every-n-steps`、`--val-every-n-batches`、`--val-episodes-per-scene`、
+`--val-frame-stride`。多卡使用单节点 DDP，显式允许原流程中未使用的参数；
+跨卡汇总 val 日志，模型、loss 和 optimizer 不变。`--max-time auto` 需要计算节点内
+可查询的 SLURM_JOB_ID，按当时剩余时间减去保存余量；不要在登录节点运行训练。
+
+默认每500 optimizer steps保存，保留最近两份 step 文件、last，及单独的最佳 val loss 文件。
+每卡 batch×devices×accumulation 是有效 batch；改变卡数要记录，不能只比较 step 数。
+`--resume` 恢复完整权重和 Adam；max-steps 是累计目标。PL 1.5 的中途恢复会重新开始
+数据遍历，不是逐 batch 无缝恢复。CSV每10步flush。steps/*.json记录成功退出与中断状态。
+
+SAM可用 `--num-shards 2 --shard-index 0/1` 并行准备；两个shards均完成后才训练。
+同一configuration只分给一个writer，条件缓存配方与着色不变。
+
 ## 已有结果
 
 既有结果建立了 [索引](artifacts/mvwd/INDEX.md)，保留原路径与原始记录，避免迁移破坏
@@ -121,3 +143,32 @@ python scripts/run_mvwd_experiment.py run YYYYMMDD_robots_smoke \
 当前重点结果是 `night_20261008` 的训练对照及 `condition_diagnostics/review/REVIEW.md`
 的条件响应诊断。以后每次完成实验，都在该实验的 `reports/REVIEW.md` 汇总状态、
 checkpoint/step、样本范围、指标、限制和下一步。
+
+## HoreKa-2 双 H200 的 NCCL 兼容设置
+
+在 hkn1956 上，原 PyTorch 2.0.1/cu118 的 NCCL 2.14.3 首次 barrier 报
+`Failed to find reverse path`，独立通信测试同样复现。集群提供的 NCCL 2.27.5
+已在同一节点通过双卡 barrier、all-reduce 和 broadcast；采用进程级 preload，
+不更改 Conda 环境、模型、loss 或 optimizer：
+
+```bash
+export LD_PRELOAD=/software/easybuild/x86_64/software/NCCL/2.27.5-GCCcore-13.3.0-CUDA-12.6.0/lib/libnccl.so.2
+export NCCL_DEBUG=INFO
+```
+
+随后按原训练命令执行。每个新的 GPU shell 需重新设置；此路径是集群库，不适用于其他机器。
+不需要把整个 CUDA/PyTorch module 加载进现有环境。该 NCCL 构建于 CUDA 12.6，
+PyTorch 自身仍为 cu118；这里只采用已实测组合，不据此承诺任意版本混用。
+PyTorch 2.0 的 `torch.cuda.nccl.version()` 是编译版本；实际版本见初始化日志和诊断的
+`nccl_runtime`。步骤记录同时保存 NCCL_*、LD_PRELOAD 和 LD_LIBRARY_PATH。
+
+更换节点/库后，先用唯一名称执行小型通信核验：
+
+```bash
+python scripts/run_mvwd_experiment.py run 20261009_fullscene_pilot \
+  --name nccl_newnode_check --kind nccl
+```
+
+诊断测试 1、1M、16M float32 元素的求和与广播，逐元素核验两 rank 的结果。
+其耗时包含初始化/同步差异，不作为通信性能 benchmark。真实训练的 20-step 检查、
+续训及最新状态见本轮 RUNBOOK 和 reports/REVIEW.md。

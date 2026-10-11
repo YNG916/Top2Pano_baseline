@@ -19,6 +19,8 @@ KINDS = {
     'infer': ('infer_mvwd.py', 'predictions'),
     'diagnose': ('scripts/diagnose_robot_conditions.py', 'diagnostics'),
     'inspect': ('scripts/inspect_mvwd.py', 'diagnostics'),
+    'review': ('scripts/review_mvwd_predictions.py', 'evaluations'),
+    'nccl': ('scripts/check_nccl.py', 'diagnostics'),
     'robots': ('scripts/inspect_robot_rendering.py', 'diagnostics'),
     'check': ('scripts/check_mvwd_checkpoint.py', 'evaluations'),
     'sam': ('scripts/prepare_mvwd.py', None),
@@ -44,7 +46,10 @@ def write_json(path, value):
 
 
 def environment():
+    communication = {k: v for k, v in os.environ.items()
+                     if k.startswith('NCCL_') or k in ('LD_PRELOAD', 'LD_LIBRARY_PATH')}
     return {'python': sys.executable, 'python_version': sys.version,
+            'communication': communication,
             'slurm': {k: os.environ[k] for k in
                       ('SLURM_JOB_ID', 'SLURM_STEP_ID', 'SLURM_JOB_NODELIST',
                        'CUDA_VISIBLE_DEVICES') if k in os.environ}}
@@ -100,7 +105,7 @@ def plan_step(directory, name, kind, extra):
         config['training']['output_dir'] = str(output)
     if kind != 'check':
         command += ['--config', str(snapshot)]
-    if kind in ('infer', 'diagnose', 'inspect', 'robots'):
+    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review'):
         command += ['--output', str(output)]
     elif kind == 'check':
         command += ['--output', str(output / 'checkpoint_finiteness.json')]

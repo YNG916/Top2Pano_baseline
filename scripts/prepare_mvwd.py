@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -43,7 +45,11 @@ def main():
     parser.add_argument("--sam-model", choices=("vit_b", "vit_l", "vit_h"), default="vit_h")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--points-per-side", type=int, default=32)
+    parser.add_argument("--num-shards", type=int, default=1, help="Partition configurations for parallel preparation")
+    parser.add_argument("--shard-index", type=int, default=0)
     args = parser.parse_args()
+    if args.num_shards < 1 or not 0 <= args.shard_index < args.num_shards:
+        parser.error("Require num_shards >= 1 and 0 <= shard_index < num_shards")
     config = load_config(args.config)
     if args.root:
         config["data"]["root"] = str(Path(args.root).expanduser().resolve())
@@ -67,8 +73,16 @@ def main():
             metadata_path = segmentation / "sam_metadata.json"
             if metadata_path.exists() and read_json(metadata_path) != recipe:
                 raise ValueError("SAM recipe changed; use a separate segmentation_root for this experiment")
-            metadata_path.write_text(json.dumps(recipe, indent=2) + "\n")
+            temporary = metadata_path.with_name(metadata_path.name + ".%s.tmp" % uuid.uuid4().hex)
+            temporary.write_text(json.dumps(recipe, indent=2) + "\n")
+            temporary.replace(metadata_path)
+        visited = 0
         for index, record in enumerate(dataset.raw.records):
+            # All episodes/floors of one configuration have a single writer.
+            owner = int(hashlib.sha256(record["configuration_path"].encode()).hexdigest()[:8], 16) % args.num_shards
+            if owner != args.shard_index:
+                continue
+            visited += 1
             if generator is not None:
                 _, rgb, valid, _, _, key = dataset.processed_bev(record)
                 if key not in seen:
@@ -102,7 +116,8 @@ def main():
                             atomic_npy(directory / f"{name}.npy", packet[name])
                     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
             if index % 25 == 0:
-                print(f"{split}: prepared {index + 1}/{len(dataset.raw.records)} episodes", flush=True)
+                print(f"{split}: shard {args.shard_index}/{args.num_shards}, manifest position {index + 1}/{len(dataset.raw.records)}", flush=True)
+        print(f"{split}: completed shard {args.shard_index}/{args.num_shards}, visited {visited} episodes", flush=True)
 
 
 if __name__ == "__main__":
