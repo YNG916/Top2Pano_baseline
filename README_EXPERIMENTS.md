@@ -102,6 +102,8 @@ python scripts/run_mvwd_experiment.py run YYYYMMDD_robots_smoke \
 | diagnose | diagnose_robot_conditions.py | diagnostics/步骤名 |
 | inspect | inspect_mvwd.py | diagnostics/步骤名 |
 | robots | inspect_robot_rendering.py | diagnostics/步骤名 |
+| projection_audit | audit_robot_projection.py | diagnostics/步骤名：自身部件、裁剪与 GT 轮廓核验 |
+| coarse_audit | audit_coarse_integration.py | diagnostics/步骤名：冻结 VAE、opacity 和采样范围消融 |
 | nccl | check_nccl.py | diagnostics/步骤名（双卡通信核验） |
 | compare | export_mvwd_comparisons.py | 已有 predictions/推理步骤名 内：GT、coarse、prediction 对照 |
 | review | review_mvwd_predictions.py | evaluations/步骤名/metrics.json；对照图放 reports/步骤名 |

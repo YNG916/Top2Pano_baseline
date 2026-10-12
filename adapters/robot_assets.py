@@ -66,7 +66,8 @@ class RobotAssets:
                 "isaac_asset_release": self.manifest["isaac_asset_release"],
                 "color_policy": "GLB PBR base-color factor times embedded base-color texture; no scene lighting",
                 "articulation_policy": "nominal mast height; other links in authored rest state",
-                "pose_policy": "all planned base_to_world at the current physical frame"}
+                "pose_policy": "all planned base_to_world at the current physical frame",
+                "mesh_clipping_policy": "selected by renderer.robot_clip_mode; all robot identities retained"}
 
 
 class MeshAtHeight:
@@ -164,11 +165,22 @@ class RobotRayRenderer:
         self.assets = RobotAssets(root)
         self._meshes = {}
 
-    def trace(self, origin, directions, transforms, heights, ids, near, far):
+    def trace(self, origin, directions, transforms, heights, ids, near, far, camera_z=None):
         best = np.full(len(directions), np.inf, dtype=np.float64)
         rgb = np.zeros((len(directions), 3), dtype=np.float32)
         identity = np.full(len(directions), -1, dtype=np.int64)
-        shifted = np.broadcast_to(origin, directions.shape) + directions * float(near)
+        # Perspective near/far clip planes are camera-forward depths, not
+        # spherical distances from the camera. Keep radial mode for legacy probes.
+        if camera_z is None:
+            ray_near = np.full(len(directions), float(near))
+            ray_far = np.full(len(directions), float(far))
+        else:
+            camera_z = np.asarray(camera_z, dtype=np.float64)
+            if camera_z.shape != (len(directions),) or not np.isfinite(camera_z).all() or (camera_z <= 0).any():
+                raise ValueError("Expected positive camera-forward ray components")
+            ray_near = float(near) / camera_z
+            ray_far = float(far) / camera_z
+        shifted = np.broadcast_to(origin, directions.shape) + directions * ray_near[:, None]
         for transform, height, robot in zip(transforms, heights, ids):
             T = rigid_transform(transform)
             name = "robot_%02d" % int(robot)
@@ -180,8 +192,8 @@ class RobotRayRenderer:
             local_origins = (shifted - T[:3, 3]) @ T[:3, :3]
             local_directions = directions @ T[:3, :3]
             distance, colors = self._meshes[nominal].trace(local_origins, local_directions, name)
-            distance += float(near)
-            take = np.isfinite(distance) & (distance <= far) & (distance < best)
+            distance += ray_near
+            take = np.isfinite(distance) & (distance <= ray_far) & (distance < best)
             best[take], rgb[take], identity[take] = distance[take], colors[take], robot
         return best.astype(np.float32), rgb, identity
 
@@ -191,12 +203,14 @@ def robot_renderer(root):
     return RobotRayRenderer(root)
 
 
-def robot_surfaces(batch, origin, directions):
+def robot_surfaces(batch, origin, directions, camera_z=None, clip_mode="camera_z"):
     """CPU BVH rays; results follow the environment tensor's device and dtype."""
     import torch
     required = ("robot_assets_root", "robot_T_wb", "robot_camera_heights", "robot_ids")
     if not all(k in batch for k in required):
         raise ValueError("Robot rendering requires all robot poses, heights, identities and assets")
+    if clip_mode not in ("camera_z", "radial_legacy"):
+        raise ValueError("Unknown robot clipping mode")
     surfaces = []
     for i in range(len(origin)):
         root = batch["robot_assets_root"][i]
@@ -205,7 +219,10 @@ def robot_surfaces(batch, origin, directions):
             raise ValueError("Robot state lengths differ")
         surfaces.append(robot_renderer(root).trace(origin[i].detach().cpu().numpy(),
                         directions[i].detach().cpu().numpy(), *arrays,
-                        float(batch["near_m"][i]), float(batch["far_m"][i])))
+                        float(batch["near_m"][i]), float(batch["far_m"][i]),
+                        camera_z=None if clip_mode == "radial_legacy" else
+                        (camera_z[i] if camera_z is not None else
+                         directions[i] @ batch["T_wc_rgb"][i, :3, 2]).detach().cpu().numpy()))
     return {name: torch.as_tensor(np.stack([s[j] for s in surfaces]), device=origin.device,
                                  dtype=torch.long if name == "id" else origin.dtype)
             for j, name in enumerate(("distance", "rgb", "id"))}

@@ -32,7 +32,7 @@ def relative_map(values, valid=None):
 
 class PerspectiveRenderer:
     def __init__(self, samples=150, chunk_rays=2048, max_height_m=3.0,
-                 density_scale=10.0, rgb_distance_normalized=0.8, robot_rendering=False):
+                 density_scale=10.0, rgb_distance_normalized=0.8, robot_rendering=False, diagnostics=False, robot_clip_mode="camera_z"):
         if samples <= 0 or chunk_rays <= 0 or max_height_m <= 0 or density_scale <= 0 or rgb_distance_normalized <= 0:
             raise ValueError("Renderer dimensions and scales must be positive")
         self.samples = samples
@@ -41,6 +41,10 @@ class PerspectiveRenderer:
         self.density_scale = density_scale
         self.rgb_distance_normalized = rgb_distance_normalized
         self.robot_rendering = bool(robot_rendering)
+        self.diagnostics = bool(diagnostics)
+        if robot_clip_mode not in ("camera_z", "radial_legacy"):
+            raise ValueError("Choose camera_z or radial_legacy robot clipping")
+        self.robot_clip_mode = robot_clip_mode
 
     def prepare_density(self, voxel, valid, wall_mask):
         # Retain the original hidden-channel vertical volume, density scaling,
@@ -131,7 +135,7 @@ class PerspectiveRenderer:
         surfaces = None
         if self.robot_rendering:
             from .robot_assets import robot_surfaces
-            surfaces = robot_surfaces(batch, origin, directions)
+            surfaces = robot_surfaces(batch, origin, directions, camera_z=camera_z, clip_mode=self.robot_clip_mode)
         p2w = tensor("bev_to_world")
         half_extent = torch.linalg.vector_norm(p2w[:, :3, 0], dim=1) * sigma.shape[-1] / 2
         near, far = tensor("near_m").reshape(-1), tensor("far_m").reshape(-1)
@@ -152,6 +156,14 @@ class PerspectiveRenderer:
                 # remain visible throughout near/far, with full-range occlusion.
                 surface_color = surfaces["rgb"].reshape(len(voxel), height, width, 3) * 2 - 1
                 full["rgb"] = relative_map(cropped["scene_rgb"] + full["robot_weight"][..., None] * surface_color)
+        if self.diagnostics and modality == "rgb":
+            full["rgb_raw"] = (cropped["scene_rgb"] + full["robot_weight"][..., None] * surface_color
+                               if surfaces is not None else cropped["rgb"])
+            full["rgb_environment_opacity"] = (cropped["opacity"] - cropped["robot_weight"]
+                                               if surfaces is not None else cropped["opacity"])
+            full["rgb_far_m"] = rgb_far
+            full["environment_opacity"] = (full["opacity"] - full["robot_weight"]
+                                           if surfaces is not None else full["opacity"])
         if surfaces is not None:
             full.pop("scene_rgb")
             full["robot_id"] = surfaces["id"].reshape(len(voxel), height, width)

@@ -23,6 +23,8 @@ KINDS = {
     'compare': ('scripts/export_mvwd_comparisons.py', None),
     'nccl': ('scripts/check_nccl.py', 'diagnostics'),
     'robots': ('scripts/inspect_robot_rendering.py', 'diagnostics'),
+    'projection_audit': ('scripts/audit_robot_projection.py', 'diagnostics'),
+    'coarse_audit': ('scripts/audit_coarse_integration.py', 'diagnostics'),
     'check': ('scripts/check_mvwd_checkpoint.py', 'evaluations'),
     'sam': ('scripts/prepare_mvwd.py', None),
     'views': ('scripts/prepare_mvwd.py', None),
@@ -114,7 +116,7 @@ def plan_step(directory, name, kind, extra):
         config['training']['output_dir'] = str(output)
     if kind != 'check':
         command += ['--config', str(snapshot)]
-    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review', 'compare'):
+    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review', 'compare', 'projection_audit', 'coarse_audit'):
         command += ['--output', str(output)]
     elif kind == 'check':
         command += ['--output', str(output / 'checkpoint_finiteness.json')]

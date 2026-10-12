@@ -75,3 +75,17 @@ def test_constant_normalization_and_invalid_depth_are_finite():
     normalized = relative_map(values, valid)
     assert torch.isfinite(normalized).all() and normalized.sum() == 0
     assert relative_map(values).sum() == 0
+
+
+def test_integration_diagnostics_preserve_rendered_values():
+    batch = room_batch()
+    sigma = torch.ones(1, 16, 32, 32) * .3
+    batch = {**batch, "K_depth": batch["K_rgb"], "T_wc_depth": batch["T_wc_rgb"],
+             "target_depth_z": torch.ones(1, *map(int, batch["target_hw"][0].tolist()))}
+    for modality in ("rgb", "depth"):
+        normal = PerspectiveRenderer(samples=20)(sigma, batch, prepared=True, modality=modality)
+        diagnostic = PerspectiveRenderer(samples=20, diagnostics=True)(sigma, batch, prepared=True, modality=modality)
+        for key in normal:
+            torch.testing.assert_close(normal[key], diagnostic[key])
+        if modality == "rgb":
+            assert "rgb_raw" in diagnostic and "rgb_environment_opacity" in diagnostic

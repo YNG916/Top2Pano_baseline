@@ -420,3 +420,20 @@ python scripts/check_mvwd_checkpoint.py \
 也不证明模型收敛或生成质量。已有 500-step 训练日志中的颜色项 NaN 已复现为空直方图
 除零；对应权重和 Adam 状态均有限，修复后的实际模型检查见同目录的
 `loss_numerics_verification.json`。
+
+## 2026-10-12：自身镜头遮挡与渲染诊断
+
+机器人 mesh 射线近/远裁剪默认改为实际透视相机的 forward-depth 平面：
+`ray_near = near_m / camera_z`、`ray_far = far_m / camera_z`。
+旧径向裁剪会看见本应在 near plane 前被裁掉的自身 `mast_carriage/front_lens`，
+形成固定的顶部半圆。没有删除观察者、隐藏部件或读取 GT 来抹除遮挡；near plane 后
+真实可见的自身部件仍保留。`renderer.robot_clip_mode: camera_z` 是修复后的默认；
+`radial_legacy` 仅用于明确命名的旧行为复现或对照。
+新推理 metadata/config 记录该开关；旧预测和已训练 checkpoint 不重写。
+旧 checkpoint 可以加载，但它们在旧条件下训练，修复后的 final 效果需重新验证。
+
+`projection_audit` 诊断只用 CPU mesh，比较两种裁剪、部件来源与 GT robot silhouette；
+GT semantic/depth 仅在诊断中读取，不进入正常渲染。`coarse_audit` 只读取初始化中的
+冻结 VAE 权重，用 CPU 核验 opacity、RGB 范围，以及仅墙/地板、有效区域归一化的消融。
+这些消融不修改正式 density normalization 或原训练目标。
+结果集中于 `artifacts/mvwd/experiments/20261012_renderer_diagnostics/`。

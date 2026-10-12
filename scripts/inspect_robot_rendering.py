@@ -50,7 +50,8 @@ def main():
         batch = default_collate([sample])
         height, width = map(int, sample["target_hw"])
         origin, directions, z = pinhole_rays(batch["K_rgb"], batch["T_wc_rgb"], height, width)
-        surfaces = robot_surfaces(batch, origin, directions)
+        surfaces = robot_surfaces(batch, origin, directions, camera_z=z,
+                                  clip_mode=config["renderer"].get("robot_clip_mode", "camera_z"))
         rgb = surfaces["rgb"][0].numpy().reshape(height, width, 3)
         ids = surfaces["id"][0].numpy().reshape(height, width)
         depth = (surfaces["distance"] * z)[0].numpy().reshape(height, width)

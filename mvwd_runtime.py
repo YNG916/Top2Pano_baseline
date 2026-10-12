@@ -22,6 +22,7 @@ def load_config(path):
             if value:
                 value = Path(value).expanduser()
                 config[group][name] = str((REPO / value).resolve() if not value.is_absolute() else value)
+    config["renderer"].setdefault("robot_clip_mode", "camera_z")
     if bool(config["data"].get("robot_rendering", False)) != bool(config["renderer"].get("robot_rendering", False)):
         raise ValueError("data.robot_rendering and renderer.robot_rendering must agree")
     return config

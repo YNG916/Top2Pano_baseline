@@ -76,7 +76,7 @@ def main():
             pixels = ((image[0].permute(1, 2, 0).cpu().numpy() + 1) * 127.5).clip(0, 255).astype(np.uint8)
             Image.fromarray(pixels).save(destination)
             saved = {name: coarse[name][0].cpu().numpy() for name in
-                     ("rgb", "depth_z", "robot_id", "robot_weight", "robot_depth_z") if name in coarse}
+                     ("rgb", "depth_z", "opacity", "robot_id", "robot_weight", "robot_depth_z") if name in coarse}
             np.savez_compressed(destination.with_suffix(".coarse.npz"), **saved)
             manifest.write(json.dumps({"episode_id": sample["episode_id"], "robot_id": sample["robot_id"],
                                        "frame_index": sample["frame_index"], "seed": seed,

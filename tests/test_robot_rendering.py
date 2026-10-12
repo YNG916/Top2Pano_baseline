@@ -210,3 +210,30 @@ def test_embedded_texture_uv_and_material_factor(robot_bundle):
         origin, directions, np.eye(4)[None], [1.], [0], .1, 6.)
     assert np.isfinite(distance).all() and ids.tolist() == [0, 0]
     np.testing.assert_allclose(rgb, [[128 / 255, 0, 0], [0, 0, 1]], atol=1e-5)
+
+
+def test_perspective_far_plane_uses_forward_depth(robot_bundle):
+    renderer = robot_renderer(str(robot_bundle))
+    pose = np.eye(4)[None]
+    pose[0, :2, 3] = [1.45, 2.]
+    origin = np.array([0., 0., 1.5])
+    directions = np.array([[.6, .8, 0.]])
+    args = (origin, directions, pose, [1.], [0], .1, 1.95)
+    assert renderer.trace(*args)[2].tolist() == [-1]  # Historical radial range.
+    distance, _, ids = renderer.trace(*args, camera_z=np.array([.8]))
+    assert ids.tolist() == [0]
+    assert float(distance[0] * .8) == pytest.approx(1.9, abs=1e-5)
+
+
+def test_perspective_near_origin_lies_on_clip_plane(robot_bundle, monkeypatch):
+    renderer = robot_renderer(str(robot_bundle))
+    pose = np.eye(4)[None]
+    origin = np.array([0., 0., 1.5])
+    directions = np.array([[.6, .8, 0.], [0., 1., 0.]])
+    renderer.trace(origin, directions, pose, [1.], [0], .1, 6.)
+    def capture(origins, rays, identity):
+        np.testing.assert_allclose(origins[:, 1], [.1, .1], atol=1e-8)
+        np.testing.assert_allclose(origins[:, 0], [.075, 0.], atol=1e-8)
+        return np.full(2, np.inf), np.zeros((2, 3))
+    monkeypatch.setattr(renderer._meshes[1.], 'trace', capture)
+    renderer.trace(origin, directions, pose, [1.], [0], .1, 6., camera_z=np.array([.8, 1.]))
