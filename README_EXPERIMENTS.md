@@ -103,6 +103,7 @@ python scripts/run_mvwd_experiment.py run YYYYMMDD_robots_smoke \
 | inspect | inspect_mvwd.py | diagnostics/步骤名 |
 | robots | inspect_robot_rendering.py | diagnostics/步骤名 |
 | nccl | check_nccl.py | diagnostics/步骤名（双卡通信核验） |
+| compare | export_mvwd_comparisons.py | 已有 predictions/推理步骤名 内：GT、coarse、prediction 对照 |
 | review | review_mvwd_predictions.py | evaluations/步骤名/metrics.json；对照图放 reports/步骤名 |
 | check | check_mvwd_checkpoint.py | evaluations/步骤名/checkpoint_finiteness.json |
 | sam / views | prepare_mvwd.py | 配置中的共享缓存；终端日志及配置快照归入实验 |
@@ -172,3 +173,66 @@ python scripts/run_mvwd_experiment.py run 20261009_fullscene_pilot \
 诊断测试 1、1M、16M float32 元素的求和与广播，逐元素核验两 rank 的结果。
 其耗时包含初始化/同步差异，不作为通信性能 benchmark。真实训练的 20-step 检查、
 续训及最新状态见本轮 RUNBOOK 和 reports/REVIEW.md。
+
+## 自动 GT 对照
+
+普通 `infer` 完成全部生成后，默认读取相同 episode/observer/frame 的 GT RGB，
+使用与训练 adapter 相同的 BOX resize，自动保存 `GT / Coarse / Prediction` 对照。
+生成阶段仍使用 `include_targets=False`，`metadata.json` 中的 `ground_truth_loaded=false`
+只描述生成阶段；GT 读取记录在 `comparison.json` 中，不修改原预测或其元数据。
+反事实 `diagnose` 不导出 GT 对照，因为不存在对应的反事实真值。
+
+按用户2026-10-11的目录偏好，自动对照与预测放在同一个目录，不另建 reports 子目录：
+
+```text
+predictions/推理步骤名/
+├── metadata.json / predictions.jsonl
+├── comparison.json / GT_COMPARISON.md
+├── bev_comparison.json / BEV_COMPARISON.md
+├── episode_id/gt_env_bev.png           原始无机器人环境 BEV
+├── episode_id/bev_calibration.json    env/world 原始标定
+└── episode_id/robot_00/
+    ├── frame_000.png                  原预测
+    ├── frame_000.coarse.npz           原 coarse 数组
+    ├── frame_000.world_bev.png         该物理帧真实 world BEV（含机器人）
+    ├── frame_000.gt.png               同一 query 的 GT
+    ├── frame_000.coarse.png           coarse RGB
+    ├── frame_000.comparison.png       GT / coarse / prediction
+    └── comparison_overview_01.png     按时间排列，最多六帧一页
+```
+
+`reports/` 只保留需要的实验分析和跨结果比较，不再为每次 infer 创建报告目录。
+没有 GT 或希望避免额外 I/O 时传 `--no-gt-comparison`。
+导出失败时预测仍保留，但步骤记录失败；可通过 CPU compare 入口补齐，
+无需再进行 diffusion。已有对照文件不会被覆盖。
+
+给已完成的预测补对照，使用新的步骤名；输出仍写进原 prediction 目录：
+
+```bash
+python scripts/run_mvwd_experiment.py run 20261009_fullscene_pilot \
+  --name best_train_rs_gt_inline --kind compare -- \
+  --predictions artifacts/mvwd/experiments/20261009_fullscene_pilot/predictions/best_train_rs_preview
+```
+
+删除 reports 不会解除同名 infer 的步骤保护；steps、logs、predictions 仍然存在。
+真正重新推理需使用新的步骤名；仅补 GT 时使用 compare 即可。
+这些是可视化产物，不代替完整 val/test 指标计算。
+
+### 预测中的真实 BEV 对照
+
+自动 GT 导出同时保存该 episode 的原始 before 环境 BEV（无机器人）和每个 query
+对应物理帧的真实 world BEV（含机器人）。直接读取正式 NPZ 的 RGB，保留原分辨率
+和颜色，不做模型输入的 letterbox、墙颜色替换，也不是额外绘制的机器人位置图。
+同一物理帧的 world BEV 与 observer 无关，故不同 observer 的图片相同。
+每条 episode 的 `bev_calibration.json` 记录 env/world 标定、楼层、shape 和来源；
+`bev_comparison.json` 关联 query 与文件，`BEV_COMPARISON.md` 提供索引。
+world BEV 仅在生成结束后读取，不作为模型条件；`--no-gt-comparison` 同时关闭这类导出。
+
+给已有预测仅补 BEV（保留现存 perspective GT 对照）：
+
+```bash
+python scripts/run_mvwd_experiment.py run 20261009_fullscene_pilot \
+  --name best_train_rs_bev --kind compare -- \
+  --predictions artifacts/mvwd/experiments/20261009_fullscene_pilot/predictions/best_train_rs_preview \
+  --bev-only
+```

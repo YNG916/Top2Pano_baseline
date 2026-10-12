@@ -69,6 +69,7 @@ class MVWDRaw:
         self.split = split
         self.manifest_hash = sha256_file(manifest)
         self._bev_cache = OrderedDict()
+        self._world_bev_cache = OrderedDict()
         self._camera_cache = OrderedDict()
         self._view_cache = OrderedDict()
         self._floor_cache = {}
@@ -106,6 +107,22 @@ class MVWDRaw:
         if data["rgb"].ndim != 3 or data["rgb"].shape[-1] != 3 or data["rgb"].dtype != np.uint8:
             raise ValueError(f"Unexpected BEV RGB format: {path}")
         return self._remember(self._bev_cache, key, data, 2)
+
+    def world_bev(self, record):
+        """Recorded before-world RGB/calibration, for post-generation display only."""
+        key = record["id"]
+        if key in self._world_bev_cache:
+            self._world_bev_cache.move_to_end(key)
+            return self._world_bev_cache[key]
+        path = self.episode_path(record) / "bev/world_before.npz"
+        with np.load(path, allow_pickle=False) as packet:
+            data = {"rgb": packet["rgb"]}
+            for name in ("world_bounds", "pixel_to_world", "world_to_pixel", "meters_per_pixel", "floor_z"):
+                data[name] = packet["calibration_" + name]
+        rgb = data["rgb"]
+        if rgb.ndim != 4 or rgb.shape[0] != record["frames"] or rgb.shape[-1] != 3 or rgb.dtype != np.uint8:
+            raise ValueError("Unexpected world BEV RGB format: %s" % path)
+        return self._remember(self._world_bev_cache, key, data, 1)
 
     def camera(self, record, robot, frame):
         key = record["id"]

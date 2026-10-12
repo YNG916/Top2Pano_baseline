@@ -20,6 +20,7 @@ KINDS = {
     'diagnose': ('scripts/diagnose_robot_conditions.py', 'diagnostics'),
     'inspect': ('scripts/inspect_mvwd.py', 'diagnostics'),
     'review': ('scripts/review_mvwd_predictions.py', 'evaluations'),
+    'compare': ('scripts/export_mvwd_comparisons.py', None),
     'nccl': ('scripts/check_nccl.py', 'diagnostics'),
     'robots': ('scripts/inspect_robot_rendering.py', 'diagnostics'),
     'check': ('scripts/check_mvwd_checkpoint.py', 'evaluations'),
@@ -99,13 +100,21 @@ def plan_step(directory, name, kind, extra):
     config = copy.deepcopy(config)
     script, group = KINDS[kind]
     output = directory / group / name if group else None
+    if kind == 'compare':
+        compare_args = argparse.ArgumentParser(add_help=False)
+        compare_args.add_argument('--predictions', required=True)
+        parsed, _ = compare_args.parse_known_args(extra)
+        target = Path(parsed.predictions).expanduser()
+        output = (REPO / target).resolve() if not target.is_absolute() else target.resolve()
+        if not (output / 'predictions.jsonl').is_file():
+            raise FileNotFoundError('Saved prediction manifest is missing')
     command = [sys.executable, '-u', str(REPO / script)]
     snapshot = directory / 'steps' / (name + '.config.yaml')
     if kind == 'train':
         config['training']['output_dir'] = str(output)
     if kind != 'check':
         command += ['--config', str(snapshot)]
-    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review'):
+    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review', 'compare'):
         command += ['--output', str(output)]
     elif kind == 'check':
         command += ['--output', str(output / 'checkpoint_finiteness.json')]
@@ -159,7 +168,7 @@ def run_step(experiment, name, kind, extra):
     config, snapshot, output, command = plan_step(directory, name, kind, extra)
     status = directory / 'steps' / (name + '.json')
     log = directory / 'logs' / (name + '.log')
-    if snapshot.exists() or log.exists() or (output is not None and output.exists()):
+    if snapshot.exists() or log.exists() or (kind != 'compare' and output is not None and output.exists()):
         raise FileExistsError('Step/output already exists; use a new step name')
     # Exclusive reservation also prevents two concurrent launches using one name.
     with status.open('x') as stream:

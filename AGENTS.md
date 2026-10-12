@@ -8,7 +8,9 @@
 - 使用唯一步骤名。失败和重试也保留日志；不要覆盖、混写或悄悄删除旧结果。
 - 每次执行保存 argv、配置快照、环境/SLURM 信息、退出码。现有统一入口自动完成这些操作。
 - 新诊断/评估脚本应接入统一入口（需要时扩展 kind 映射），不要另建随意命名的输出根目录。
-- 原始指标放 evaluations，结论与对照图放 reports；完成后在 reports/REVIEW.md 记录
+- 原始指标放 evaluations，分析结论和跨实验对比放 reports。用户2026-10-11要求自动 GT
+  对照紧邻原 predictions 中的每帧图像，不为每次 infer 新建 reports 子目录。
+  完成后在 reports/REVIEW.md 记录
   checkpoint/step、数据范围、验证结果、限制及下一步。
 - 历史目录按 artifacts/mvwd/INDEX.md 追溯，后续不要在其中追加新实验。
   未经明确要求不要搬迁历史数据，以免破坏配置与 provenance 路径。

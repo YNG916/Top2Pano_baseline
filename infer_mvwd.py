@@ -1,4 +1,4 @@
-"""Shared occupancy, independent perspective diffusion queries; no target reads."""
+"""GT-free perspective generation followed by optional GT comparison export."""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--robots", type=int, nargs="+")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--no-gt-comparison", action="store_true",
+                        help="Skip post-generation GT comparisons and recorded env/world BEV export")
     args = parser.parse_args()
     config = load_config(args.config)
     if args.root:
@@ -81,6 +83,11 @@ def main():
                                        "path": str(destination.relative_to(output))}) + "\n")
             if index % 10 == 0:
                 print(f"Generated {index + 1}/{len(dataset)} queries", flush=True)
+
+    # All queries and RNG-dependent generation have finished before any GT read.
+    if not args.no_gt_comparison:
+        from mvwd_prediction_comparison import export_comparisons
+        export_comparisons(output, cache_root=config["data"].get("cache_root"))
 
 
 if __name__ == "__main__":

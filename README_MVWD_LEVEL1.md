@@ -8,7 +8,10 @@
 输入是无机器人 **before environment BEV RGB**、BEV 标定、目标实际采集相机 K/T、
 **当前物理帧所有机器人的 base-to-world 位姿、身份、相机高度和共享带纹理机器人资产**。
 训练监督为 **before perspective RGB + depth**，segmentation 由输入 RGB 经 SAM
-生成，绝不读取 GT semantic/height/occupancy。每个机器人/帧独立生成，不加入多视角
+生成，绝不读取 GT semantic/height/occupancy。普通推理完成全部生成后，默认在原 `predictions/推理步骤名/` 内导出 GT/coarse/prediction 对照；
+同时保存 episode 原始环境 BEV 和每个 query 对应帧的真实 world BEV（含机器人），均放在原 prediction 目录。
+GT/world BEV 仅在生成结束后读取，可用 `--no-gt-comparison` 关闭，见 [实验规范](README_EXPERIMENTS.md#自动-gt-对照)。
+每个机器人/帧独立生成，不加入多视角
 attention、联合 diffusion 或跨视角/时间损失。默认 BEV 512×512，目标 H×W=256×448。
 
 ## 以实际仓库代码为准
