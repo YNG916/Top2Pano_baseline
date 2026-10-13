@@ -103,6 +103,9 @@ python scripts/run_mvwd_experiment.py run YYYYMMDD_robots_smoke \
 | inspect | inspect_mvwd.py | diagnostics/步骤名 |
 | robots | inspect_robot_rendering.py | diagnostics/步骤名 |
 | projection_audit | audit_robot_projection.py | diagnostics/步骤名：自身部件、裁剪与 GT 轮廓核验 |
+| asset_variant | build_robot_asset_variant.py | diagnostics/步骤名：共享派生资产构建/校验；资产本体写入显式 destination |
+| asset_equivalence | verify_robot_asset_equivalence.py | diagnostics/步骤名：不读 GT 的两种资产投影等价核验 |
+| visibility_audit | audit_robot_visibility.py | diagnostics/步骤名：固定资产部件可见性对照，GT 只用于评估 |
 | coarse_audit | audit_coarse_integration.py | diagnostics/步骤名：冻结 VAE、opacity 和采样范围消融 |
 | nccl | check_nccl.py | diagnostics/步骤名（双卡通信核验） |
 | compare | export_mvwd_comparisons.py | 已有 predictions/推理步骤名 内：GT、coarse、prediction 对照 |

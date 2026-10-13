@@ -57,7 +57,15 @@ class CombinedMVWDModel(pl.LightningModule):
         current = self.config.get("robot_asset_provenance", {}).get("manifest_sha256")
         old = saved.get("robot_asset_provenance", {}).get("manifest_sha256")
         if enabled and (not current or current != old):
-            raise ValueError("Checkpoint robot asset manifest differs from the current bundle")
+            # A derivative is a changed conditioning protocol, never a silent
+            # checksum bypass. Only an explicit source-checkpoint ablation may
+            # use a checked lineage match; unrelated bundles still fail.
+            source = self.config.get("robot_asset_provenance", {}).get("source_manifest_sha256")
+            permitted = self.config.get("model", {}).get("allow_source_asset_checkpoint", False)
+            if not (permitted and source and source == old):
+                raise ValueError("Checkpoint robot asset manifest differs from the current bundle")
+            print("Loading source-asset checkpoint with explicit derived-asset conditioning; "
+                  "current asset manifest and lineage are recorded in the run config.")
 
     def configure_optimizers(self):
         # Retain the optimizer and parameter selection in upstream main.py.

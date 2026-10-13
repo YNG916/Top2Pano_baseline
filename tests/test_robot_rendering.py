@@ -237,3 +237,63 @@ def test_perspective_near_origin_lies_on_clip_plane(robot_bundle, monkeypatch):
         return np.full(2, np.inf), np.zeros((2, 3))
     monkeypatch.setattr(renderer._meshes[1.], 'trace', capture)
     renderer.trace(origin, directions, pose, [1.], [0], .1, 6., camera_z=np.array([.8, 1.]))
+
+
+def test_asset_visibility_is_specific_to_native_shell():
+    from adapters.robot_assets import part_is_hidden
+    white = {"prim_path": "chassis_link/visual/top_body", "material": "/Looks/Alabaster"}
+    gray = {**white, "material": "/Looks/Gray"}
+    head = {**white, "prim_path": "mast_carriage/sensor_head"}
+    assert not part_is_hidden(white, "all")
+    assert part_is_hidden(white, "hide_white_top_body")
+    assert not part_is_hidden(gray, "hide_white_top_body")
+    assert not part_is_hidden(head, "hide_white_top_body")
+    assert part_is_hidden(gray, "hide_top_body")
+    with pytest.raises(ValueError):
+        part_is_hidden(white, "unknown")
+
+
+def test_visibility_reveals_identity_deck_without_editing_assets(robot_bundle):
+    import trimesh
+    from trimesh.visual.material import PBRMaterial
+    scene = trimesh.Scene()
+    parts = []
+    for index, (y, color, prim, material) in enumerate([
+        (1., [255, 255, 255, 255], "chassis_link/visual/top_body", "/Looks/Alabaster"),
+        (2., [230, 26, 26, 255], "accent", "accent"),
+    ]):
+        mesh = trimesh.creation.box(extents=[.4, .2, 1.])
+        mesh.visual = trimesh.visual.TextureVisuals(material=PBRMaterial(baseColorFactor=color))
+        transform = np.eye(4); transform[:3, 3] = [0, y, 1.5]
+        node = "part_%03d" % index
+        scene.add_geometry(mesh, geom_name=node, node_name=node, transform=transform)
+        parts.append({"node": node, "prim_path": prim, "material": material,
+                      "transform": transform.tolist(), "mast": False})
+    (robot_bundle / "geometry/body.glb").write_bytes(scene.export(file_type="glb"))
+    (robot_bundle / "geometry/parts.json").write_text(json.dumps({"parts": parts}))
+    manifest = json.loads((robot_bundle / "manifest.json").read_text())
+    manifest["variants"][0].update(parts=2, triangles=24)
+    for name in ["geometry/body.glb", "geometry/parts.json"]:
+        path = robot_bundle / name
+        manifest["files"][name] = {"size": path.stat().st_size, "sha256": sha256_file(path)}
+    (robot_bundle / "manifest.json").write_text(json.dumps(manifest))
+    snapshot = {p: p.read_bytes() for p in robot_bundle.rglob("*") if p.is_file()}
+    args = (np.array([0., 0., 1.5]), np.array([[0., 1., 0.]]), np.eye(4)[None], [1.], [0], .1, 6.)
+    distance, color, identity = robot_renderer(str(robot_bundle)).trace(*args, camera_z=np.ones(1))
+    np.testing.assert_allclose(distance, [.9], atol=1e-5)
+    np.testing.assert_allclose(color, [[1., 1., 1.]])
+    assert identity.tolist() == [0]
+    for policy in ["hide_white_top_body", "hide_top_body"]:
+        renderer = robot_renderer(str(robot_bundle), policy)
+        distance, color, identity = renderer.trace(*args, camera_z=np.ones(1))
+        np.testing.assert_allclose(distance, [1.9], atol=1e-5)
+        np.testing.assert_allclose(color, [[.9, .1, .1]], atol=1e-5)
+        assert identity.tolist() == [0]
+        assert renderer._meshes[1.].source_triangles == 24
+        assert renderer._meshes[1.].visible_triangles == 12
+        batch = bodies(room_batch(), robot_bundle, [(0., 0., 0.)])
+        coarse = PerspectiveRenderer(samples=20, robot_rendering=True,
+                                     robot_visibility_policy=policy)(torch.zeros(1, 16, 32, 32), batch, prepared=True)
+        assert float(coarse["depth_z"][0, 2, 3]) == pytest.approx(1.9, abs=1e-5)
+        assert float(coarse["robot_weight"][0, 2, 3]) == pytest.approx(1.)
+    assert all(p.read_bytes() == data for p, data in snapshot.items())

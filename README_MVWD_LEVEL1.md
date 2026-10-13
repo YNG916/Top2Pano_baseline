@@ -437,3 +437,89 @@ GT semantic/depth 仅在诊断中读取，不进入正常渲染。`coarse_audit`
 冻结 VAE 权重，用 CPU 核验 opacity、RGB 范围，以及仅墙/地板、有效区域归一化的消融。
 这些消融不修改正式 density normalization 或原训练目标。
 结果集中于 `artifacts/mvwd/experiments/20261012_renderer_diagnostics/`。
+
+
+## 2026-10-13：原生底盘外壳可见性适配
+
+`renderer.robot_visibility_policy` 提供三个固定资产规则：
+
+- `all`（兼容默认）：所有原生部件参与射线求交。
+- `hide_white_top_body`：仅隐藏 `chassis_link/visual/top_body` 中材质为 Alabaster 的部分。
+- `hide_top_body`：隐藏整个原生 `chassis_link/visual/top_body`，其他部件继续正常渲染。
+
+过滤发生在 baseline 内的 BVH 构建阶段；依据资产 prim/material 元数据，不依据 query 的
+GT、像素颜色或 GT visibility。源 GLB/USD、manifest、数据集和 GT 不改，身份 deck、
+closed base、轮子、mast 和其他机器人仍保留。隐藏后的最近表面会正常参与 RGB/depth
+合成及预测环境遮挡。开关经相同 `renderer` 配置同时传给训练与推理，并保存在元数据中。
+
+已比较 Rs_int 和 office_vendor_machine 各一条 episode、三个 observer、frame 0/20/40。
+只隐藏白色部分会暴露 GT 中没有的彩色内部结构；整个 native top_body 隐藏后的匹配更好。
+因此提供显式配置 `configs/mvwd_level1_fullscene_native_top_body_hidden.yaml` 供后续验证，
+没有静默改变已有 fullscene 配置。该选择是已知资产的可见性适配，不能据此断言 Isaac
+采集时确实隐藏了原生部件；仍需采集代码或 production stage 才能核实原因。
+
+旧 checkpoint 可用于条件改变的推理对照；它在旧 coarse 条件下训练，最终 diffusion
+效果需要重新核验。重新训练请创建独立实验并从初始化权重开始；若从旧 checkpoint
+继续训练，需要在实验目的中明确记录切换可见性条件，不能作为旧训练的原样延续。
+其他 baseline 和自有方法也应遵守相同固定资产可见性规则。
+
+在已有交互 GPU shell 中，可用以下命令做一次新条件验证；不会申请 Slurm 资源：
+
+```bash
+python scripts/run_mvwd_experiment.py create 20261013_robot_visibility_check \
+  --config configs/mvwd_level1_fullscene_native_top_body_hidden.yaml \
+  --purpose '旧 best checkpoint 在 camera_z 裁剪及 native top_body 隐藏条件下的推理验证'
+
+python scripts/run_mvwd_experiment.py run 20261013_robot_visibility_check \
+  --name best_val_office_hidden --kind infer -- \
+  --checkpoint artifacts/mvwd/experiments/20261009_fullscene_pilot/training/train20k/checkpoints/best/best-000010019.ckpt \
+  --split val --scene office_vendor_machine --max-episodes 1 \
+  --robots 0 1 2 --frames 0 20 40
+```
+
+生成后 GT/coarse/prediction 与 BEV 对照仍紧邻预测图片；本次没有重新跑 diffusion。
+诊断和数值详见
+`artifacts/mvwd/experiments/20261012_renderer_diagnostics/reports/REVIEW.md`。
+
+
+## 2026-10-13：供所有方法共用的对齐资产包
+
+用户要求把可见性规则落实到共享资产本体，新增独立派生包：
+
+```text
+<dataset_root>/robot_assets/
+├── MVWD_RobotAssets_v1/             原始上传包，保留原 SHA256 和完整外壳
+└── MVWD_RobotAssets_v1_gt_aligned/  统一对齐包，native top_body 不参与渲染
+```
+
+派生包的 12 个 GLB 已移除该 prim 对应的 15 个 material mesh/node；
+`geometry/parts.json` 和部件 NPZ 也移除这些 mesh，因此普通 GLB/parts 加载不需要另外
+实现隐藏开关。标准 USD 入口及 12 个固定高度变体在该 prim 上显式设置 `visibility=invisible`。
+自定义 USD mesh 提取器仍须遵守 USD 的 computed visibility，不能忽略后直接收集所有 Mesh。
+不要以 vendor/native 层或 source templates 为机器人入口。
+
+原始数据和 GT 不修改，旧资产包不覆盖。派生包 `SOURCE_MANIFEST.json` 保存原清单；
+新 manifest/adaptation、校验报告和 SHA256 单独记录本次固定可见性修正。
+source template fingerprint 保留用于 episode 来源对应，不宣称派生几何与生产资产完全相同。
+原包可继续复现旧实验，历史 checkpoint/预测和历史实验配置不重写。
+
+Top2Pano 后续使用 `configs/mvwd_level1_fullscene_shared_robot_assets.yaml`：
+`data.robot_asset_variant: gt_aligned` 从 dataset root 选择派生包。
+`renderer.robot_visibility_policy: all` 即可，因为外壳已从 GLB/parts 中移除。
+其他 baseline 和自有方法只需把自己的 `robot_assets_root` 指向同一 `_gt_aligned` 目录；
+无需导入 Top2Pano adapter 或数据集接口。跨机器迁移时复制整个派生包。
+
+新资产有新的 manifest SHA256。旧 checkpoint 对资产的校验默认仍严格；仅这个验证配置
+显式启用 `model.allow_source_asset_checkpoint: true`，允许使用来自其已校验 SOURCE_MANIFEST
+的旧权重做条件改变的对照。无关资产仍拒绝加载。新资产、来源和允许开关均写入 run metadata；
+从旧权重继续训练要明确标为资产条件改变的 finetune，不能称为旧训练原样续跑。
+
+构建脚本为 `scripts/build_robot_asset_variant.py`，需要独立 Python 3.11 环境中的
+NumPy/trimesh/Pillow/PyYAML 和 `usd-core==26.8`；它不改变训练 Conda 环境。
+通过统一入口 `--kind asset_variant -- --destination ...` 执行；目标若存在会拒绝覆盖。
+先核验源包，再创建 `.building`，全包校验和源文件复核通过后才发布目标目录。
+若中断，保留 staging 与失败日志，选择新的目标或核查 staging 后再操作，不盲目重复覆盖。
+
+本次构建/依赖/几何核验见
+`artifacts/mvwd/experiments/20261013_shared_robot_asset_alignment/reports/REVIEW.md`。
+前一节的 adapter 隐藏配置仍有效；使用共享派生资产的验证应采用本节新配置。

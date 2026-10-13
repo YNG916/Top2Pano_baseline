@@ -35,6 +35,21 @@ class RobotAssets:
         self.appearances = read_json(self.file("appearances.json"))
         self.parts = read_json(self.file("geometry/parts.json"))["parts"]
         self.mounts = read_json(self.file("camera_mount.json"))["mounts_by_height_m"]
+        self.adaptation = self.manifest.get("adaptation")
+        self.source_manifest_hash = None
+        if self.adaptation:
+            if (self.adaptation.get("kind") != "native_top_body_hidden"
+                    or self.adaptation.get("revision") != 1
+                    or self.adaptation.get("hidden_prim_paths") != ["chassis_link/visual/top_body"]):
+                raise ValueError("Unsupported robot asset adaptation")
+            source_file = self.file(self.adaptation["source_manifest_file"])
+            source = read_json(source_file)
+            source_hash = sha256_file(source_file)
+            if (source_hash != self.adaptation.get("source_manifest_sha256")
+                    or source.get("template_fingerprint") != self.manifest["template_fingerprint"]
+                    or source.get("asset_id") != self.adaptation.get("source_asset_id")):
+                raise ValueError("Robot asset source lineage mismatch")
+            self.source_manifest_hash = source_hash
 
     def file(self, relative):
         path = within(self.root, relative)
@@ -67,12 +82,26 @@ class RobotAssets:
                 "color_policy": "GLB PBR base-color factor times embedded base-color texture; no scene lighting",
                 "articulation_policy": "nominal mast height; other links in authored rest state",
                 "pose_policy": "all planned base_to_world at the current physical frame",
-                "mesh_clipping_policy": "selected by renderer.robot_clip_mode; all robot identities retained"}
+                "mesh_clipping_policy": "selected by renderer.robot_clip_mode; all robot identities retained",
+                "visibility_policy": "selected by renderer.robot_visibility_policy; source assets unchanged",
+                "source_manifest_sha256": self.source_manifest_hash,
+                "asset_adaptation": self.adaptation}
+
+
+VISIBILITY_POLICIES = ("all", "hide_white_top_body", "hide_top_body")
+
+
+def part_is_hidden(part, policy):
+    if policy not in VISIBILITY_POLICIES:
+        raise ValueError("Unknown robot visibility policy")
+    if part["prim_path"] != "chassis_link/visual/top_body":
+        return False
+    return policy == "hide_top_body" or (policy == "hide_white_top_body" and part["material"].endswith("/Alabaster"))
 
 
 class MeshAtHeight:
     """One BVH shared by all identities/poses at this mast height."""
-    def __init__(self, assets, height):
+    def __init__(self, assets, height, visibility_policy="all"):
         try:
             import trimesh
             from trimesh.ray.ray_pyembree import RayMeshIntersector
@@ -85,7 +114,7 @@ class MeshAtHeight:
         if len(scene.geometry) != variant["parts"]:
             raise ValueError("Incomplete robot GLB geometry")
         vertices, faces, self.visuals, ends = [], [], [], []
-        offset = count = 0
+        offset = count = source_count = 0
         for part in assets.parts:
             mesh = scene.geometry[part["node"]]
             transform = np.asarray(part["transform"], dtype=np.float64).copy()
@@ -93,15 +122,20 @@ class MeshAtHeight:
                 transform[2, 3] += height - 0.8
             # parts.json is authoritative for the base frame, not viewer axes.
             vertices.append(mesh.vertices @ transform[:3, :3].T + transform[:3, 3])
-            faces.append(mesh.faces + offset)
+            source_count += len(mesh.faces)
+            if not part_is_hidden(part, visibility_policy):
+                faces.append(mesh.faces + offset)
+                count += len(mesh.faces)
             offset += len(mesh.vertices)
-            count += len(mesh.faces)
             ends.append(count)
             accent = any(part["prim_path"] == p or part["prim_path"].startswith(p + "/")
                          for p in assets.appearances["accent_prim_paths"])
             self.visuals.append((mesh.faces, mesh.visual, accent))
-        if count != variant["triangles"]:
+        if source_count != variant["triangles"]:
             raise ValueError("Robot GLB triangle count differs from manifest")
+        self.source_triangles = source_count
+        self.visible_triangles = count
+        self.visibility_policy = visibility_policy
         self.ends = np.asarray(ends)
         self.mesh = trimesh.Trimesh(vertices=np.concatenate(vertices), faces=np.concatenate(faces), process=False)
         bounds = variant.get("base_bounds_m")
@@ -161,8 +195,11 @@ class MeshAtHeight:
 
 
 class RobotRayRenderer:
-    def __init__(self, root):
+    def __init__(self, root, visibility_policy="all"):
+        if visibility_policy not in VISIBILITY_POLICIES:
+            raise ValueError("Unknown robot visibility policy")
         self.assets = RobotAssets(root)
+        self.visibility_policy = visibility_policy
         self._meshes = {}
 
     def trace(self, origin, directions, transforms, heights, ids, near, far, camera_z=None):
@@ -188,7 +225,7 @@ class RobotRayRenderer:
                 raise ValueError("Unknown robot identity: " + name)
             nominal = self.assets.nominal_height(height)
             if nominal not in self._meshes:
-                self._meshes[nominal] = MeshAtHeight(self.assets, nominal)
+                self._meshes[nominal] = MeshAtHeight(self.assets, nominal, self.visibility_policy)
             local_origins = (shifted - T[:3, 3]) @ T[:3, :3]
             local_directions = directions @ T[:3, :3]
             distance, colors = self._meshes[nominal].trace(local_origins, local_directions, name)
@@ -199,11 +236,11 @@ class RobotRayRenderer:
 
 
 @lru_cache(maxsize=2)
-def robot_renderer(root):
-    return RobotRayRenderer(root)
+def robot_renderer(root, visibility_policy="all"):
+    return RobotRayRenderer(root, visibility_policy)
 
 
-def robot_surfaces(batch, origin, directions, camera_z=None, clip_mode="camera_z"):
+def robot_surfaces(batch, origin, directions, camera_z=None, clip_mode="camera_z", visibility_policy="all"):
     """CPU BVH rays; results follow the environment tensor's device and dtype."""
     import torch
     required = ("robot_assets_root", "robot_T_wb", "robot_camera_heights", "robot_ids")
@@ -217,7 +254,8 @@ def robot_surfaces(batch, origin, directions, camera_z=None, clip_mode="camera_z
         arrays = [batch[k][i].detach().cpu().numpy() for k in ("robot_T_wb", "robot_camera_heights", "robot_ids")]
         if len({len(a) for a in arrays}) != 1:
             raise ValueError("Robot state lengths differ")
-        surfaces.append(robot_renderer(root).trace(origin[i].detach().cpu().numpy(),
+        renderer = robot_renderer(root) if visibility_policy == "all" else robot_renderer(root, visibility_policy)
+        surfaces.append(renderer.trace(origin[i].detach().cpu().numpy(),
                         directions[i].detach().cpu().numpy(), *arrays,
                         float(batch["near_m"][i]), float(batch["far_m"][i]),
                         camera_z=None if clip_mode == "radial_legacy" else

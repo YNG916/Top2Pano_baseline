@@ -32,7 +32,7 @@ def relative_map(values, valid=None):
 
 class PerspectiveRenderer:
     def __init__(self, samples=150, chunk_rays=2048, max_height_m=3.0,
-                 density_scale=10.0, rgb_distance_normalized=0.8, robot_rendering=False, diagnostics=False, robot_clip_mode="camera_z"):
+                 density_scale=10.0, rgb_distance_normalized=0.8, robot_rendering=False, diagnostics=False, robot_clip_mode="camera_z", robot_visibility_policy="all"):
         if samples <= 0 or chunk_rays <= 0 or max_height_m <= 0 or density_scale <= 0 or rgb_distance_normalized <= 0:
             raise ValueError("Renderer dimensions and scales must be positive")
         self.samples = samples
@@ -45,6 +45,10 @@ class PerspectiveRenderer:
         if robot_clip_mode not in ("camera_z", "radial_legacy"):
             raise ValueError("Choose camera_z or radial_legacy robot clipping")
         self.robot_clip_mode = robot_clip_mode
+        from .robot_assets import VISIBILITY_POLICIES
+        if robot_visibility_policy not in VISIBILITY_POLICIES:
+            raise ValueError("Unknown robot visibility policy")
+        self.robot_visibility_policy = robot_visibility_policy
 
     def prepare_density(self, voxel, valid, wall_mask):
         # Retain the original hidden-channel vertical volume, density scaling,
@@ -135,7 +139,8 @@ class PerspectiveRenderer:
         surfaces = None
         if self.robot_rendering:
             from .robot_assets import robot_surfaces
-            surfaces = robot_surfaces(batch, origin, directions, camera_z=camera_z, clip_mode=self.robot_clip_mode)
+            surfaces = robot_surfaces(batch, origin, directions, camera_z=camera_z, clip_mode=self.robot_clip_mode,
+                                      visibility_policy=self.robot_visibility_policy)
         p2w = tensor("bev_to_world")
         half_extent = torch.linalg.vector_norm(p2w[:, :3, 0], dim=1) * sigma.shape[-1] / 2
         near, far = tensor("near_m").reshape(-1), tensor("far_m").reshape(-1)

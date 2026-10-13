@@ -43,7 +43,7 @@ class MVWDLevel1:
                  robots=(0, 1, 2), frame_stride=1, frames=None, scenes=None,
                  max_episodes=None, segmentation_root=None, cache_root=None,
                  include_targets=True, include_depth=True, wall_prior="rgb_black",
-                 robot_rendering=False, robot_assets_root=None):
+                 robot_rendering=False, robot_assets_root=None, robot_asset_variant="source"):
         self.raw = MVWDRaw(root, split, scenes, max_episodes)
         self.bev_size = int(bev_size)
         self.target_size = tuple(map(int, target_size))
@@ -66,7 +66,10 @@ class MVWDLevel1:
         self.robot_assets = None
         if robot_rendering:
             from .robot_assets import RobotAssets
-            self.robot_assets = RobotAssets(robot_assets_root or self.raw.root / "robot_assets/MVWD_RobotAssets_v1")
+            if robot_asset_variant not in ("source", "gt_aligned"):
+                raise ValueError("robot_asset_variant must be source or gt_aligned")
+            bundle = "MVWD_RobotAssets_v1" + ("_gt_aligned" if robot_asset_variant == "gt_aligned" else "")
+            self.robot_assets = RobotAssets(robot_assets_root or self.raw.root / "robot_assets" / bundle)
             for record in self.raw.records:
                 self.robot_assets.check_fingerprint(record)
         self._frames, self._ends = [], []

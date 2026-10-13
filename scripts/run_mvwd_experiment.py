@@ -25,6 +25,9 @@ KINDS = {
     'robots': ('scripts/inspect_robot_rendering.py', 'diagnostics'),
     'projection_audit': ('scripts/audit_robot_projection.py', 'diagnostics'),
     'coarse_audit': ('scripts/audit_coarse_integration.py', 'diagnostics'),
+    'visibility_audit': ('scripts/audit_robot_visibility.py', 'diagnostics'),
+    'asset_variant': ('scripts/build_robot_asset_variant.py', 'diagnostics'),
+    'asset_equivalence': ('scripts/verify_robot_asset_equivalence.py', 'diagnostics'),
     'check': ('scripts/check_mvwd_checkpoint.py', 'evaluations'),
     'sam': ('scripts/prepare_mvwd.py', None),
     'views': ('scripts/prepare_mvwd.py', None),
@@ -116,7 +119,7 @@ def plan_step(directory, name, kind, extra):
         config['training']['output_dir'] = str(output)
     if kind != 'check':
         command += ['--config', str(snapshot)]
-    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review', 'compare', 'projection_audit', 'coarse_audit'):
+    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review', 'compare', 'projection_audit', 'coarse_audit', 'visibility_audit', 'asset_variant', 'asset_equivalence'):
         command += ['--output', str(output)]
     elif kind == 'check':
         command += ['--output', str(output / 'checkpoint_finiteness.json')]
