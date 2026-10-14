@@ -38,8 +38,13 @@ def make_dataset(config, split, *, include_targets=True, scenes=None, max_episod
         values["robots"] = robots
     if frame_stride is not None:
         values["frame_stride"] = frame_stride
+        values.pop("frames_per_episode", None)
+        values.pop("frames", None)
+    if frames is not None:
+        values["frames"] = frames
+        values.pop("frames_per_episode", None)
     return MVWDLevel1(root, split, **values, include_targets=include_targets,
-                     scenes=scenes, max_episodes=max_episodes, frames=frames)
+                     scenes=scenes, max_episodes=max_episodes)
 
 
 def original_batch(batch, config):

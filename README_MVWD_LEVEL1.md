@@ -523,3 +523,53 @@ NumPy/trimesh/Pillow/PyYAML 和 `usd-core==26.8`；它不改变训练 Conda 环�
 本次构建/依赖/几何核验见
 `artifacts/mvwd/experiments/20261013_shared_robot_asset_alignment/reports/REVIEW.md`。
 前一节的 adapter 隐藏配置仍有效；使用共享派生资产的验证应采用本节新配置。
+
+
+## 配对验证：任务初始化和随机图像参照
+
+`infer` 可以传 `--initialization-only`，与 `--checkpoint` 二选一。
+前者从 models/control_sd21_ini.ckpt 初始化两个分支，使用相同 query、资产、renderer、
+DDIM、guidance 与种子，不读取任务训练 checkpoint。它保留预训练 SD 权重，
+因此应称为“未做 MVWD finetuning 的初始化”，不是纯随机权重或随机像素图。
+生成后仍自动导出紧邻预测的 GT 和 BEV，metadata 记录 checkpoint_kind 与初始化文件 SHA。
+
+随机像素参考通过 CPU `--kind random_reference` 读取已完成预测的正式 query/GT，
+每条用16个固定随机种子生成独立 uint8 均匀 RGB 噪声，同时比较固定 RGB=(128,128,128) 灰图。
+统计为整幅 RGB、[0,1]、逐图 PSNR 的平均值；这些仅是诊断参照，不是强生成 baseline。
+`--pair BEST_GROUP:INITIALIZATION_GROUP` 检查 query、generation seed、输入及采样配置相同，
+核验 coarse RGB/depth/robot ID 对应；四列 GT/coarse/initialization/best 对照放在 best 预测
+的同一帧旁边 `frame_XXX.initialization_comparison.png`，不新建 report 子目录。
+PSNR 高于随机像素不能证明空间、时序或机器人正确性；均匀灰图也可能比错误但清晰的
+生成图得到更高 PSNR。结论必须结合同 query 的图像和任务指标。
+
+
+## 全 episode 少帧训练配置
+
+`configs/mvwd_level1_fullscene_2frames.yaml` 保留正式 train split 的全部18597 episodes，
+每条 episode 分前后半段各选一帧，保留三个 observer，共111582 query/完整epoch。
+帧通过episode ID + seed42 + 时间区间的SHA256确定；不使用GT、GT visibility或轨迹内容
+挑选，每epoch重复同一对帧，便于不同方法公平复现。数据loader打乱query顺序，完整epoch
+仍遍历每个episode和每个observer，不设置scene/max-episodes或max-steps过滤。
+`data.frames_per_episode: 1` 可改成一帧；显式infer --frames仍覆盖该采样策略。
+不要同时传 --frame-stride（它会显式覆盖少帧策略）。
+
+当前约93GiB H100的FP32实测：batch16含反向与Adam状态可运行，峰值reserved约72GiB；
+batch32在第二步OOM。新配置使用batch16、accumulate_grad_batches2，有效batch32；
+完整epoch含6974个microbatches，3487次更新。单次cached batch模型测时约5.3秒，
+折算约10小时/epoch；全量IO、验证、checkpoint及累积减少Adam频率会改变实际时间。
+这不是完整训练速度测量或ETA保证；其他显存型号/多卡DDP还应先检查。
+
+验证使用全部1350 val episodes、每条固定两帧、三个observer，共8100 query；每完整epoch
+验证一次。validation_seed按batch/query身份固定torch噪声及latent采样，并通过fork_rng恢复
+训练RNG。此稳定性限于固定devices/batch/order；改变设备数或batch后需建立新的验证基准。
+模型、loss、Adam和学习率1e-5不改，precision32。best/平台停止改监控有有效梯度的
+val/loss_simple；total_loss中深度与histc颜色项不作为唯一收敛判断。
+最多10epochs，min_epochs3；4次验证未改善至少0.001触发EarlyStopping。触发平台或达到
+epoch预算不等于生成任务收敛，仍需固定query生成验证。使用--max-time时为安全保存退出
+允许min_epochs提前中断；节点时间限制优先于epoch计划。
+
+本轮方案和启动/续训命令见
+`artifacts/mvwd/experiments/20261013_fullscene_2frames/reports/REVIEW.md`。
+从control_sd21_ini.ckpt重新开始，与旧20k源资产实验区分。尚未启动长训练。
+`--accumulate-grad-batches`支持CLI覆写，双卡每卡16/accum1保持有效batch32；
+双卡H200的最大batch/速度未实测，不宣称与本次单卡测试相同。

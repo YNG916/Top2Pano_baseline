@@ -103,6 +103,8 @@ python scripts/run_mvwd_experiment.py run YYYYMMDD_robots_smoke \
 | inspect | inspect_mvwd.py | diagnostics/步骤名 |
 | robots | inspect_robot_rendering.py | diagnostics/步骤名 |
 | projection_audit | audit_robot_projection.py | diagnostics/步骤名：自身部件、裁剪与 GT 轮廓核验 |
+| batch_profile | profile_mvwd_batch.py | diagnostics/步骤名：真实前向/反向/Adam 显存及固定验证 RNG 核验，不保存权重 |
+| random_reference | evaluate_random_reference.py | evaluations/步骤名：已完成预测与随机 RGB/固定灰图的同 GT PSNR 参照 |
 | asset_variant | build_robot_asset_variant.py | diagnostics/步骤名：共享派生资产构建/校验；资产本体写入显式 destination |
 | asset_equivalence | verify_robot_asset_equivalence.py | diagnostics/步骤名：不读 GT 的两种资产投影等价核验 |
 | visibility_audit | audit_robot_visibility.py | diagnostics/步骤名：固定资产部件可见性对照，GT 只用于评估 |

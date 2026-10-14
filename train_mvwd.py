@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--no-validation", action="store_true")
     parser.add_argument("--devices", type=int, help="Number of GPUs visible in this allocation")
     parser.add_argument("--batch-size", type=int, help="Batch size per GPU")
+    parser.add_argument("--accumulate-grad-batches", type=int, help="Gradient accumulation; effective batch is per-GPU batch x devices x this")
     parser.add_argument("--max-epochs", type=int, help="Epoch budget; -1 disables the epoch limit")
     parser.add_argument("--max-time", help="HH:MM:SS, D:HH:MM:SS, or auto (Slurm time left minus margin)")
     parser.add_argument("--time-margin-minutes", type=int, default=30)
@@ -36,7 +37,8 @@ def main():
     if args.max_epochs is not None and (args.max_epochs == 0 or args.max_epochs < -1):
         parser.error("max_epochs must be positive or -1")
     config = load_config(args.config)
-    for key, value in (("devices", args.devices), ("batch_size", args.batch_size)):
+    for key, value in (("devices", args.devices), ("batch_size", args.batch_size),
+                       ("accumulate_grad_batches", args.accumulate_grad_batches)):
         if value is not None:
             if value < 1:
                 parser.error(key + " must be positive")
@@ -49,7 +51,7 @@ def main():
         parser.error(f"Missing initialization checkpoint: {config['model']['init_checkpoint']}")
     train = make_dataset(config, "train", scenes=args.scene, max_episodes=args.max_episodes,
                          frame_stride=args.frame_stride)
-    from mvwd_training_control import validation_datasets, checkpoint_callbacks, time_budget
+    from mvwd_training_control import validation_datasets, checkpoint_callbacks, convergence_callbacks, time_budget
     val_parts = validation_datasets(config, args)
     datasets = [train] + val_parts
     validation = None
@@ -98,19 +100,21 @@ def main():
     loader = torch.utils.data.DataLoader(train, shuffle=True, **loader_options)
     val_loader = torch.utils.data.DataLoader(validation, shuffle=False, **loader_options) if validation is not None else None
     callbacks = checkpoint_callbacks(settings["output_dir"], validation is not None,
-                                     args.checkpoint_every_n_steps)
+                                     args.checkpoint_every_n_steps, monitor=settings.get("monitor", "val/total_loss"))
+    callbacks += convergence_callbacks(settings, validation is not None)
     options = {}
     if settings["devices"] > 1:
         from pytorch_lightning.plugins import DDPPlugin
         # Upstream density parameters deliberately receive no gradient.
         options["strategy"] = DDPPlugin(find_unused_parameters=True)
     if duration is not None:
-        options.update(max_time=duration, min_epochs=0, min_steps=0)
+        options.update(max_time=duration, min_steps=0)
     if args.val_every_n_batches is not None and validation is not None:
         options["val_check_interval"] = args.val_every_n_batches
     trainer = pl.Trainer(accelerator=settings["accelerator"], devices=settings["devices"],
                          precision=settings["precision"],
                          max_epochs=args.max_epochs if args.max_epochs is not None else settings["max_epochs"],
+                         min_epochs=0 if duration is not None else int(settings.get("min_epochs", 0)),
                          max_steps=args.max_steps if args.max_steps is not None else -1,
                          accumulate_grad_batches=settings["accumulate_grad_batches"],
                          callbacks=callbacks, logger=CSVLogger(settings["output_dir"], name="logs", version=0, flush_logs_every_n_steps=10),

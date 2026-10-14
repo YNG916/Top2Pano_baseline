@@ -47,7 +47,7 @@ def time_budget(value, margin_minutes=30):
     return duration
 
 
-def checkpoint_callbacks(output, validation, every_steps):
+def checkpoint_callbacks(output, validation, every_steps, monitor="val/total_loss"):
     from pytorch_lightning.callbacks import ModelCheckpoint
     if every_steps < 1:
         raise ValueError('Checkpoint interval must be positive')
@@ -65,7 +65,7 @@ def checkpoint_callbacks(output, validation, every_steps):
                                  every_n_epochs=0, save_on_train_epoch_end=False)]
     if validation:
         callbacks.append(ModelCheckpoint(dirpath=str(directory / 'best'), filename='best-{step:09d}',
-                                         auto_insert_metric_name=False, monitor='val/total_loss', mode='min',
+                                         auto_insert_metric_name=False, monitor=monitor, mode='min',
                                          save_top_k=1, save_last=False, every_n_epochs=1,
                                          save_on_train_epoch_end=False))
     return callbacks
@@ -82,3 +82,15 @@ def validation_datasets(config, args):
     scenes = sorted({r['scene'] for r in MVWDRaw(config['data']['root'], 'val').records})
     return [make_dataset(config, 'val', scenes=[scene], max_episodes=args.val_episodes_per_scene,
                          frame_stride=stride) for scene in scenes]
+
+
+def convergence_callbacks(settings, validation):
+    """Opt-in stopping on validation plateau; original optimizer/loss unchanged."""
+    values = settings.get('early_stopping')
+    if not values or not validation:
+        return []
+    from pytorch_lightning.callbacks import EarlyStopping
+    return [EarlyStopping(monitor=settings.get('monitor', 'val/total_loss'), mode='min',
+                          min_delta=float(values.get('min_delta', .001)),
+                          patience=int(values.get('patience', 4)),
+                          check_finite=True, check_on_train_epoch_end=False)]

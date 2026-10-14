@@ -14,7 +14,10 @@ def main():
     parser.add_argument("--config", default=str(REPO / "configs/mvwd_level1.yaml"))
     parser.add_argument("--root")
     parser.add_argument("--robot-assets")
-    parser.add_argument("--checkpoint", required=True)
+    weights = parser.add_mutually_exclusive_group(required=True)
+    weights.add_argument("--checkpoint")
+    weights.add_argument("--initialization-only", action="store_true",
+                        help="Use the shared SD/ControlNet initialization with no MVWD finetuning")
     parser.add_argument("--split", choices=("train", "val", "test"), default="test")
     parser.add_argument("--scene", action="append")
     parser.add_argument("--max-episodes", type=int)
@@ -41,14 +44,22 @@ def main():
     from torch.utils.data._utils.collate import default_collate
     from adapters.camera_geometry import PerspectiveRenderer
     from adapters.mvwd_raw import sha256_file
-    from mvwd_model import load_trained
+    from mvwd_model import load_trained, CombinedMVWDModel
     output = Path(args.output).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    model = load_trained(config, args.checkpoint).to(args.device).eval()
+    if args.initialization_only:
+        torch.manual_seed(int(config["training"]["seed"]))
+        model = CombinedMVWDModel(config, initialize=True).to(args.device).eval()
+        checkpoint_path = config["model"]["init_checkpoint"]
+    else:
+        model = load_trained(config, args.checkpoint).to(args.device).eval()
+        checkpoint_path = args.checkpoint
     renderer = PerspectiveRenderer(**config["renderer"])
     settings = config["inference"]
     metadata = {"method": "Top2Pano-Persp", "dataset": dataset.provenance(), "config": config,
-                "checkpoint_sha256": sha256_file(args.checkpoint), "ground_truth_loaded": False,
+                "checkpoint_sha256": sha256_file(checkpoint_path),
+                "checkpoint_kind": "SD-ControlNet initialization without MVWD finetuning" if args.initialization_only else "trained",
+                "checkpoint_path": str(Path(checkpoint_path).resolve()), "ground_truth_loaded": False,
                 "robot_conditioning": dataset.robot_assets is not None,
                 "seed_policy": "sha256(base_seed, release_id, episode_id, robot_id, frame_index)"}
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")

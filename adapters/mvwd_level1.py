@@ -38,12 +38,28 @@ def scale_intrinsics(K, old_hw, new_hw):
     return np.diag([new_w / old_w, new_h / old_h, 1.0]) @ K
 
 
+def stratified_episode_frames(frame_count, sample_count, episode_id, seed=42):
+    """Fixed, label-free physical frames from disjoint temporal strata."""
+    import hashlib
+    if isinstance(sample_count, bool) or int(sample_count) != sample_count or not 1 <= sample_count <= frame_count:
+        raise ValueError("frames_per_episode must be an integer in [1, episode frames]")
+    selected = []
+    for slot in range(int(sample_count)):
+        lo = slot * frame_count // sample_count
+        hi = (slot + 1) * frame_count // sample_count
+        key = "%s:%s:frame-stratum:%s" % (seed, episode_id, slot)
+        offset = int(hashlib.sha256(key.encode()).hexdigest()[:16], 16) % (hi - lo)
+        selected.append(lo + offset)
+    return tuple(selected)
+
+
 class MVWDLevel1:
     def __init__(self, root, split="train", *, bev_size=512, target_size=(256, 448),
                  robots=(0, 1, 2), frame_stride=1, frames=None, scenes=None,
                  max_episodes=None, segmentation_root=None, cache_root=None,
                  include_targets=True, include_depth=True, wall_prior="rgb_black",
-                 robot_rendering=False, robot_assets_root=None, robot_asset_variant="source"):
+                 robot_rendering=False, robot_assets_root=None, robot_asset_variant="source",
+                 frames_per_episode=None, frame_sample_seed=42):
         self.raw = MVWDRaw(root, split, scenes, max_episodes)
         self.bev_size = int(bev_size)
         self.target_size = tuple(map(int, target_size))
@@ -72,10 +88,17 @@ class MVWDLevel1:
             self.robot_assets = RobotAssets(robot_assets_root or self.raw.root / "robot_assets" / bundle)
             for record in self.raw.records:
                 self.robot_assets.check_fingerprint(record)
+        if frames is not None and frames_per_episode is not None:
+            raise ValueError("Choose explicit frames or frames_per_episode")
+        self.frame_sampling = {"policy": "stratified_hash" if frames_per_episode is not None else ("explicit" if frames is not None else "stride"),
+                               "frames_per_episode": frames_per_episode, "seed": frame_sample_seed}
         self._frames, self._ends = [], []
         total = 0
         for record in self.raw.records:
-            selected = tuple(range(0, record["frames"], frame_stride)) if frames is None else tuple(map(int, frames))
+            if frames_per_episode is not None:
+                selected = stratified_episode_frames(record["frames"], frames_per_episode, record["id"], frame_sample_seed)
+            else:
+                selected = tuple(range(0, record["frames"], frame_stride)) if frames is None else tuple(map(int, frames))
             if not selected or len(set(selected)) != len(selected) or min(selected) < 0 or max(selected) >= record["frames"]:
                 raise ValueError(f"Invalid frame selection for {record['id']}")
             if min(self.robots) < 0 or max(self.robots) >= record["robots"]:
@@ -165,6 +188,7 @@ class MVWDLevel1:
 
     def provenance(self):
         return {**self.raw.provenance(), "query_count": len(self), "robots": self.robots,
+                "frame_sampling": self.frame_sampling,
                 "frame_selections": [list(frames) for frames in sorted(set(self._frames))],
                 "episode_ids": [record["id"] for record in self.raw.records], "bev_size": self.bev_size,
                 "target_size": self.target_size, "wall_prior": self.wall_prior,

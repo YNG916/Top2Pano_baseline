@@ -46,7 +46,19 @@ class CombinedMVWDModel(pl.LightningModule):
         return self._step(batch, "train")
 
     def validation_step(self, batch, batch_idx):
-        return self._step(batch, "val")
+        seed = self.config.get("training", {}).get("validation_seed")
+        if seed is None:
+            return self._step(batch, "val")
+        # Fix only evaluation RNG; preserve the original training RNG stream.
+        # Batch/query identity makes validation reproducible within a fixed
+        # device/batch protocol, including after checkpoint resume.
+        import hashlib
+        identity = (batch["episode_id"], batch["robot_id"].detach().cpu().tolist(),
+                    batch["frame_index"].detach().cpu().tolist())
+        value = int(hashlib.sha256((str(seed) + repr(identity)).encode()).hexdigest()[:8], 16)
+        with torch.random.fork_rng():
+            torch.manual_seed(value)
+            return self._step(batch, "val")
 
     def on_load_checkpoint(self, checkpoint):
         saved = checkpoint.get("hyper_parameters", {}).get("config", {})

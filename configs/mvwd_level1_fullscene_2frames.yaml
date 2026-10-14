@@ -1,0 +1,74 @@
+# Full train split; 2 fixed stratified physical frames/episode and all 3 observers.
+# Current ~93 GiB H100: batch16 verified; batch32 OOM after Adam state initialization.
+# Effective batch32; original FP32, Adam, learning rate, network and losses retained.
+data:
+  root: /hfs2/work/workspace/scratch/ka_wq8392-multiview/datasets/MultiViewWorldDataset_v1
+  segmentation_root: artifacts/mvwd/sam
+  cache_root: artifacts/mvwd/cache
+  bev_size: 512
+  target_size:
+  - 256
+  - 448
+  robots:
+  - 0
+  - 1
+  - 2
+  frame_stride: 10
+  robot_rendering: true
+  robot_assets_root: null
+  robot_asset_variant: gt_aligned
+  wall_prior: rgb_black
+  frames_per_episode: 2
+  frame_sample_seed: 42
+model:
+  config: models/cldm_v21.yaml
+  init_checkpoint: models/control_sd21_ini.ckpt
+  sd_locked: true
+  only_mid_control: false
+  allow_source_asset_checkpoint: false
+renderer:
+  robot_clip_mode: camera_z
+  robot_visibility_policy: all
+  samples: 150
+  chunk_rays: 2048
+  max_height_m: 3.0
+  density_scale: 10.0
+  rgb_distance_normalized: 0.8
+  robot_rendering: true
+training:
+  learning_rate: 1.0e-05
+  batch_size: 16
+  num_workers: 2
+  max_epochs: 10
+  accumulate_grad_batches: 2
+  seed: 42
+  accelerator: gpu
+  devices: 1
+  precision: 32
+  output_dir: artifacts/mvwd/experiments/fullscene_2frames/training
+  min_epochs: 3
+  monitor: val/loss_simple
+  validation_seed: 20261013
+  early_stopping:
+    patience: 4
+    min_delta: 0.001
+inference:
+  ddim_steps: 50
+  guidance_scale: 9.0
+  seed: 42
+prompts:
+  occupancy: Using an indoor top-down view image and its corresponding segmentation
+    as the condition input, learn the complete geometric structure of the room based
+    on this view to generate a voxel representation of the space. The segmentation
+    helps distinguish between the floor and furniture, enabling the model to capture
+    the overall room layout, as well as the shape, position, and spatial relationships
+    of objects and walls. By leveraging both the visual and structural cues from the
+    segmentation, the model can achieve a more precise reconstruction of the room's
+    geometric structure from the top-down perspective, ensuring accurate height estimation
+    and detailed object representation.
+  refinement: An ultra-high-definition perspective indoor scene. Using the provided
+    coarse depth map and coarse color image as conditions, please reconstruct the
+    room's structure and generate both a high-quality perspective RGB image and a
+    refined depth map of the indoor space. Ensure that the generated outputs maintain
+    the same structure as the coarse depth map, while preserving the correct colors
+    of the floor and furniture.
