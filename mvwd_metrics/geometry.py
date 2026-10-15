@@ -121,3 +121,75 @@ def visible_surface_overlap(first, second, **kwargs):
         "source": "ground_truth_depth_and_camera",
         "definition": "minimum bidirectional GT visible-surface fraction",
     }
+
+
+def directed_correspondences(source, target, boundary=2, depth_atol_m=0.05, depth_rtol=0.01):
+    """GT-visible pixel-center matches, with a safe bilinear target footprint.
+
+    uv is in continuous corner-origin coordinates: pixel (y,x) has center
+    (x+.5,y+.5). All nonzero bilinear contributors must be stable surfaces
+    at the projected depth. This is deliberately stricter than the nearest
+    pixel overlap receipt used by the historical MEt3R eligibility filter.
+    """
+    if boundary < 0 or depth_atol_m <= 0 or depth_rtol < 0:
+        raise ValueError("Invalid correspondence tolerances")
+    valid = _valid_surface(source, boundary, depth_atol_m, depth_rtol)
+    target_valid = _valid_surface(target, boundary, depth_atol_m, depth_rtol)
+    y, x = np.nonzero(valid)
+    pixels = np.stack((x + 0.5, y + 0.5, np.ones(len(x))), axis=1)
+    points = (pixels @ np.linalg.inv(source["K"]).T) * source["depth_z"][y, x, None]
+    uv, z = _project(points, source, target)
+    height, width = target["depth_z"].shape
+    good = np.isfinite(uv).all(1) & (z > target["near"]) & (z <= target["far"])
+    # Snap only numerical roundoff at integer centers, never subpixel geometry.
+    index = uv - 0.5
+    rounded = np.rint(index)
+    index = np.where(np.abs(index - rounded) < 1e-8, rounded, index)
+    uv = index + 0.5
+    good &= (index[:, 0] >= 0) & (index[:, 0] <= width - 1)
+    good &= (index[:, 1] >= 0) & (index[:, 1] <= height - 1)
+    idx = np.flatnonzero(good)
+    base = np.floor(index[idx]).astype(np.int64)
+    fraction = index[idx] - base
+    visible = np.ones(len(idx), dtype=bool)
+    for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+        weight = (fraction[:, 0] if dx else 1 - fraction[:, 0]) * (
+            fraction[:, 1] if dy else 1 - fraction[:, 1])
+        active = weight > 1e-8
+        u, v = base[:, 0] + dx, base[:, 1] + dy
+        inside = (u >= 0) & (u < width) & (v >= 0) & (v < height)
+        safe_u, safe_v = u.clip(0, width - 1), v.clip(0, height - 1)
+        tz = target["depth_z"][safe_v, safe_u]
+        matches = inside & target_valid[safe_v, safe_u] & (
+            np.abs(tz - z[idx]) <= np.maximum(depth_atol_m, depth_rtol * tz))
+        visible &= ~active | matches
+    selected = idx[visible]
+    return {
+        "source_yx": np.stack((y[selected], x[selected]), axis=1),
+        "target_uv": uv[selected],
+        "ratio": len(selected) / len(x) if len(x) else 0.0,
+        "visible_pixels": len(selected),
+        "valid_pixels": len(x),
+    }
+
+
+def gt_surface_correspondences(first, second, **kwargs):
+    forward = directed_correspondences(first, second, **kwargs)
+    backward = directed_correspondences(second, first, **kwargs)
+    return {
+        "forward": forward,
+        "backward": backward,
+        "ratio": min(forward["ratio"], backward["ratio"]),
+        "source": "ground_truth_depth_and_camera",
+        "definition": "minimum bidirectional GT visible-surface fraction, valid bilinear footprint",
+    }
+
+
+def correspondence_receipt(matches):
+    """Small JSON receipt; never write dense coordinate arrays into summary logs."""
+    return {
+        **{k: matches[k] for k in ("ratio", "source", "definition")},
+        **{direction: {k: matches[direction][k] for k in
+                       ("ratio", "visible_pixels", "valid_pixels")}
+           for direction in ("forward", "backward")},
+    }

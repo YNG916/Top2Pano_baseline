@@ -1,0 +1,33 @@
+schema_version: 2
+level: 1
+metrics: [psnr, lpips, fid, mv_gtwarp_dino]
+seeds: [42, 43, 44]
+# Fixed sparse full-test protocol, using the same baseline-independent stratified sampler.
+frames_per_episode: 2
+frame_sample_seed: 42
+robots: [0, 1, 2]
+target_hw: [256, 448]
+bootstrap_samples: 2000
+bootstrap_seed: 20261015
+weights_dir: models/metrics
+# GT geometry defines BOTH eligibility and dense correspondences for GTWarp.
+overlap:
+  threshold: 0.1
+  boundary: 2
+  depth_atol_m: 0.05
+  depth_rtol: 0.01
+
+# Invalid official reconstructions do not silently change the GT pair set.
+met3r_undefined_policy: null_entire_metric_and_report_failure_fraction
+
+gtwarp:
+  implementation: mvwd_gtwarp_dino_v1
+  feature_backbone: dino_vits16
+  upsampler: featup
+  use_norm: true
+  input_resolution: native
+  visibility: valid_bilinear_footprint
+  distance: cosine
+  normalization: after_bilinear_sampling
+  pair_aggregation: mean_of_two_directions
+  surfaces: all_gt_visible_same_time

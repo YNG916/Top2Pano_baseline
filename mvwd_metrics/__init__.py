@@ -8,12 +8,14 @@ from .core import (
     EpisodeMetricAggregator,
 )
 from .level1 import Level1Evaluator, evaluate_level1
+from .gtwarp import MVGTWarpDINOMetric
 
 __all__ = [
     "PSNRMetric",
     "LPIPSMetric",
     "FIDMetric",
     "MEt3RMetric",
+    "MVGTWarpDINOMetric",
     "EpisodeMetricAggregator",
     "Level1Evaluator",
     "evaluate_level1",

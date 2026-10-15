@@ -16,14 +16,15 @@ from .core import (
     images01,
     UndefinedMetricError,
 )
-from .geometry import visible_surface_overlap
+from .geometry import visible_surface_overlap, gt_surface_correspondences, correspondence_receipt
+from .gtwarp import MVGTWarpDINOMetric, METRIC_NAME
 
 
 class Level1Evaluator:
     def __init__(
         self,
         seeds=(42, 43, 44),
-        metrics=("psnr", "lpips", "fid", "met3r"),
+        metrics=("psnr", "lpips", "fid", METRIC_NAME),
         device="cuda",
         weights_dir="models/metrics",
         bootstrap_samples=2000,
@@ -34,9 +35,9 @@ class Level1Evaluator:
         if (
             not self.metrics
             or len(set(metrics)) != len(metrics)
-            or set(metrics) - {"psnr", "lpips", "fid", "met3r"}
+            or set(metrics) - {"psnr", "lpips", "fid", "met3r", METRIC_NAME}
         ):
-            raise ValueError("Choose distinct Level1 metrics: psnr lpips fid met3r")
+            raise ValueError("Choose distinct Level1 metrics: psnr lpips fid met3r mv_gtwarp_dino")
         self.seeds, self.device = tuple(seeds), device
         self.aggregate = EpisodeMetricAggregator(
             seeds, bootstrap_samples, bootstrap_seed
@@ -48,6 +49,7 @@ class Level1Evaluator:
         self.gt_units = set()
         self.view_units = set()
         self.pair_units = set()
+        self.gtwarp_units = set()
         self.failed_pairs = []
 
     def backend(self, metric):
@@ -64,6 +66,8 @@ class Level1Evaluator:
                 self.backends[metric] = FIDMetric(self.device, self.weights_dir)
             elif metric == "met3r":
                 self.backends[metric] = MEt3RMetric(self.device)
+            elif metric == METRIC_NAME:
+                self.backends[metric] = MVGTWarpDINOMetric(self.device, self.weights_dir)
         return self.backends[metric]
 
     def update_views(self, episode, seed, units, predictions, targets):
@@ -179,6 +183,19 @@ class Level1Evaluator:
             },
         }
 
+    def update_gtwarp_pair(self, episode, seed, unit, matches, *, features):
+        key = (str(episode), seed, unit)
+        if seed not in self.seeds or key in self.gtwarp_units:
+            raise ValueError("Invalid seed or duplicate evaluated GTWarp pair")
+        details = self.backend(METRIC_NAME).score_features(*features, matches)
+        self.aggregate.add(METRIC_NAME, episode, seed, unit, details["score"])
+        self.gtwarp_units.add(key)
+        return {
+            "episode_id": str(episode), "seed": seed, "unit": unit,
+            METRIC_NAME: float(details["score"]),
+            "gtwarp_details": details, "gtwarp_status": "ok",
+        }
+
 
 def evaluate_level1(
     pred_images,
@@ -230,15 +247,25 @@ def evaluate_level1(
                 pred[trial, e].reshape(n * t, c, h, w),
                 gt[e].reshape(n * t, c, h, w),
             )
-        if "met3r" not in evaluator.metrics:
+        if not {"met3r", METRIC_NAME}.intersection(evaluator.metrics):
             continue
         if overlap_metadata is None and camera_params is None:
             raise ValueError(
-                "MEt3R requires GT overlap eligibility; no generated-depth pair selection"
+                "Cross-view metrics require GT overlap eligibility; no generated-depth pair selection"
             )
+        if METRIC_NAME in evaluator.metrics and camera_params is None:
+            raise ValueError("GTWarp requires actual GT cameras/depth, not just overlap ratios")
         for time in range(t):
+            feature_cache = {}
             for i, j in combinations(range(n), 2):
-                if overlap_metadata is None:
+                matches = None
+                if METRIC_NAME in evaluator.metrics:
+                    matches = gt_surface_correspondences(camera_params[e, i, time],
+                                                         camera_params[e, j, time],
+                                                         **(overlap_options or {}))
+                if overlap_metadata is None and matches is not None and "met3r" not in evaluator.metrics:
+                    receipt = correspondence_receipt(matches)
+                elif overlap_metadata is None:
                     receipt = visible_surface_overlap(
                         camera_params[e, i, time],
                         camera_params[e, j, time],
@@ -255,7 +282,7 @@ def evaluate_level1(
                     raise ValueError(
                         "Pair eligibility must be defined from GT geometry"
                     )
-                if receipt["ratio"] > overlap_threshold:
+                if "met3r" in evaluator.metrics and receipt["ratio"] > overlap_threshold:
                     for trial, seed in enumerate(seeds):
                         evaluator.update_pair(
                             episodes[e],
@@ -264,6 +291,15 @@ def evaluate_level1(
                             pred[trial, e, i, time][None],
                             pred[trial, e, j, time][None],
                         )
+                if matches is not None and matches["ratio"] > overlap_threshold:
+                    for trial, seed in enumerate(seeds):
+                        for view in (i, j):
+                            if (trial, view) not in feature_cache:
+                                feature_cache[trial, view] = evaluator.backend(METRIC_NAME).features(
+                                    pred[trial, e, view, time][None])[0]
+                        evaluator.update_gtwarp_pair(
+                            episodes[e], seed, (time, i, j), matches,
+                            features=(feature_cache[trial, i], feature_cache[trial, j]))
                 pairs.append(
                     {
                         "episode_id": episodes[e],
@@ -271,6 +307,9 @@ def evaluate_level1(
                         "views": [i, j],
                         **receipt,
                         "eligible": receipt["ratio"] > overlap_threshold,
+                        **({"gtwarp": correspondence_receipt(matches),
+                            "gtwarp_eligible": matches["ratio"] > overlap_threshold}
+                           if matches is not None else {}),
                     }
                 )
     result = evaluator.finish()
