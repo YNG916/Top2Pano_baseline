@@ -1,0 +1,28 @@
+# Independent evaluation environment; do not install into the historical training environment.
+numpy==1.26.4
+Pillow==10.4.0
+scipy==1.13.1
+PyYAML==6.0.2
+lpips==0.1.4
+clean-fid==0.1.35
+# Official MEt3R/FeatUp runtime dependencies (compiled packages installed separately).
+iopath==0.1.10
+fvcore==0.1.5.post20221221
+roma==1.5.1
+matplotlib==3.9.2
+tqdm==4.66.5
+opencv-python==4.10.0.84
+einops==0.8.0
+jaxtyping==0.2.34
+pytorch-lightning==2.4.0
+torchmetrics==1.4.3
+pyglet==1.5.29
+timm==0.4.12
+huggingface-hub[torch]==0.24.7
+safetensors==0.4.5
+kornia==0.7.3
+omegaconf==2.3.0
+scikit-learn==1.5.2
+ninja==1.11.1.4
+setuptools==75.1.0
+pytest==8.3.3

@@ -103,6 +103,7 @@ python scripts/run_mvwd_experiment.py run YYYYMMDD_robots_smoke \
 | inspect | inspect_mvwd.py | diagnostics/步骤名 |
 | robots | inspect_robot_rendering.py | diagnostics/步骤名 |
 | projection_audit | audit_robot_projection.py | diagnostics/步骤名：自身部件、裁剪与 GT 轮廓核验 |
+| metrics_level1 | evaluate_mvwd_level1.py | evaluations/步骤名：Level1四主指标、episode CI、GT overlap与seed覆盖核验 |
 | batch_profile | profile_mvwd_batch.py | diagnostics/步骤名：真实前向/反向/Adam 显存及固定验证 RNG 核验，不保存权重 |
 | random_reference | evaluate_random_reference.py | evaluations/步骤名：已完成预测与随机 RGB/固定灰图的同 GT PSNR 参照 |
 | asset_variant | build_robot_asset_variant.py | diagnostics/步骤名：共享派生资产构建/校验；资产本体写入显式 destination |
@@ -243,3 +244,8 @@ python scripts/run_mvwd_experiment.py run 20261009_fullscene_pilot \
   --predictions artifacts/mvwd/experiments/20261009_fullscene_pilot/predictions/best_train_rs_preview \
   --bev-only
 ```
+
+## Level 1 正式指标
+
+PSNR/LPIPS/FID/MEt3R的固定协议、独立评估环境、preview及全test K=3命令见
+[README_METRICS_LEVEL1.md](README_METRICS_LEVEL1.md)。使用kind metrics_level1，原始结果统一写evaluations。

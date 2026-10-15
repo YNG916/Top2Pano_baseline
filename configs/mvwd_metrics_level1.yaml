@@ -1,0 +1,21 @@
+schema_version: 1
+level: 1
+metrics: [psnr, lpips, fid, met3r]
+seeds: [42, 43, 44]
+# Fixed sparse full-test protocol, using the same baseline-independent stratified sampler.
+frames_per_episode: 2
+frame_sample_seed: 42
+robots: [0, 1, 2]
+target_hw: [256, 448]
+bootstrap_samples: 2000
+bootstrap_seed: 20261015
+weights_dir: models/metrics
+# GT-visible surfaces only select pairs. Official MEt3R still infers its own geometry.
+overlap:
+  threshold: 0.1
+  boundary: 2
+  depth_atol_m: 0.05
+  depth_rtol: 0.01
+
+# Invalid official reconstructions do not silently change the GT pair set.
+met3r_undefined_policy: null_entire_metric_and_report_failure_fraction

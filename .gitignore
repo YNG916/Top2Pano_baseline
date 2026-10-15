@@ -20,3 +20,6 @@ models/*.ckpt
 models/*.ckpt.tmp
 models/control_sd21_ini.json
 models/sam/
+
+# Downloaded evaluation model weights
+/models/metrics/

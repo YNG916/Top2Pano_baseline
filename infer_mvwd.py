@@ -23,12 +23,15 @@ def main():
     parser.add_argument("--max-episodes", type=int)
     parser.add_argument("--frames", type=int, nargs="+")
     parser.add_argument("--robots", type=int, nargs="+")
+    parser.add_argument("--seed", type=int, help="Generation base seed; recorded for K-seed evaluation")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output", required=True)
     parser.add_argument("--no-gt-comparison", action="store_true",
                         help="Skip post-generation GT comparisons and recorded env/world BEV export")
     args = parser.parse_args()
     config = load_config(args.config)
+    if args.seed is not None:
+        config["inference"]["seed"] = args.seed
     if args.root:
         config["data"]["root"] = str(Path(args.root).expanduser().resolve())
     if args.robot_assets:
