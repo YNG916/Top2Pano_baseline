@@ -200,11 +200,24 @@ python scripts/run_mvwd_experiment.py run 20261013_fullscene_2frames_gpu4 \
 每个评估步骤在 `artifacts/mvwd/experiments/实验名/evaluations/步骤名/` 内保存：
 
 - `metrics.json`：聚合数值、episode明细/CI、coverage、输入manifest hashes、模型后端来源。
+- `METRICS.md`：每次eval完成后自动生成的易读记录，包含总指标/CI、各seed、各场景、跨view覆盖及解释备注。
 - `protocol.yaml`：此次冻结的评估协议副本。
 - `per_query.jsonl`：逐episode/seed/view/frame的PSNR和LPIPS。
 - `per_pair.jsonl`：同一时刻GT合格pair的MV-GTWarp-DINO、双向误差、像素数；选原协议时记录MEt3R。
 - `overlap.jsonl`：所有候选对的双向GT重叠率、有效像素数与资格，跨seed共享。
 - `fid_*_statistics.npz`：全体特征的数量、均值和无偏协方差，按GT/各seed分别保存。
+
+已完成的旧评估也可以补导 `METRICS.md`，只读取已保存JSON/JSONL，不加载模型、不需要GPU，
+原始 `metrics.json` 不改写。输出紧邻原指标，不新增reports目录；已有 `METRICS.md` 不覆盖。
+
+```bash
+conda activate mvwd-metrics
+python scripts/run_mvwd_experiment.py run 20261013_fullscene_2frames_gpu4 \
+  --name metrics_test_k3_readable_new --kind metrics_report -- \
+  --evaluation artifacts/mvwd/experiments/20261013_fullscene_2frames_gpu4/evaluations/metrics_test_k3_gtwarp
+```
+
+本次完整test评估已经补好，不需要再执行这个示例。其他评估换对应实验名和evaluation路径。
 
 原prediction PNG/metadata不会改写，GT仅在评估时读取。终端日志和退出码由统一runner记录。
 失败重试采用新步骤名。评估过程中会流式保存原始单位结果，完成后才写最终metrics.json；

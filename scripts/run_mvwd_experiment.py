@@ -31,6 +31,7 @@ KINDS = {
     'random_reference': ('scripts/evaluate_random_reference.py', 'evaluations'),
     'batch_profile': ('scripts/profile_mvwd_batch.py', 'diagnostics'),
     'gtwarp_validate': ('scripts/validate_mvwd_gtwarp.py', 'evaluations'),
+    'metrics_report': ('scripts/export_mvwd_metrics_report.py', None),
     'metrics_level1': ('scripts/evaluate_mvwd_level1.py', 'evaluations'),
     'check': ('scripts/check_mvwd_checkpoint.py', 'evaluations'),
     'sam': ('scripts/prepare_mvwd.py', None),
@@ -117,13 +118,23 @@ def plan_step(directory, name, kind, extra):
         output = (REPO / target).resolve() if not target.is_absolute() else target.resolve()
         if not (output / 'predictions.jsonl').is_file():
             raise FileNotFoundError('Saved prediction manifest is missing')
+    if kind == 'metrics_report':
+        report_args = argparse.ArgumentParser(add_help=False)
+        report_args.add_argument('--evaluation', required=True)
+        parsed, _ = report_args.parse_known_args(extra)
+        target = Path(parsed.evaluation).expanduser()
+        output = (REPO / target).resolve() if not target.is_absolute() else target.resolve()
+        if not (output / 'metrics.json').is_file():
+            raise FileNotFoundError('Saved evaluation metrics.json is missing')
+        if (output / 'METRICS.md').exists():
+            raise FileExistsError('METRICS.md already exists; existing reports are not overwritten')
     command = [sys.executable, '-u', str(REPO / script)]
     snapshot = directory / 'steps' / (name + '.config.yaml')
     if kind == 'train':
         config['training']['output_dir'] = str(output)
     if kind != 'check':
         command += ['--config', str(snapshot)]
-    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review', 'compare', 'projection_audit', 'coarse_audit', 'visibility_audit', 'asset_variant', 'asset_equivalence', 'random_reference', 'batch_profile', 'metrics_level1', 'gtwarp_validate'):
+    if kind in ('infer', 'diagnose', 'inspect', 'robots', 'nccl', 'review', 'compare', 'projection_audit', 'coarse_audit', 'visibility_audit', 'asset_variant', 'asset_equivalence', 'random_reference', 'batch_profile', 'metrics_level1', 'gtwarp_validate', 'metrics_report'):
         command += ['--output', str(output)]
     elif kind == 'check':
         command += ['--output', str(output / 'checkpoint_finiteness.json')]
@@ -177,7 +188,7 @@ def run_step(experiment, name, kind, extra):
     config, snapshot, output, command = plan_step(directory, name, kind, extra)
     status = directory / 'steps' / (name + '.json')
     log = directory / 'logs' / (name + '.log')
-    if snapshot.exists() or log.exists() or (kind != 'compare' and output is not None and output.exists()):
+    if snapshot.exists() or log.exists() or (kind not in ('compare', 'metrics_report') and output is not None and output.exists()):
         raise FileExistsError('Step/output already exists; use a new step name')
     # Exclusive reservation also prevents two concurrent launches using one name.
     with status.open('x') as stream:

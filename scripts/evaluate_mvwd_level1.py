@@ -17,6 +17,7 @@ import yaml
 
 from mvwd_runtime import REPO, load_config
 from mvwd_metrics import Level1Evaluator
+from mvwd_metrics.report import write_metrics_markdown
 from mvwd_metrics.core import UndefinedMetricError, EpisodeMetricAggregator
 from mvwd_metrics.geometry import (visible_surface_overlap, gt_surface_correspondences, correspondence_receipt)
 from mvwd_metrics.gtwarp import METRIC_NAME
@@ -356,6 +357,8 @@ def main():
         json.dumps(json_safe(result), ensure_ascii=False, indent=2, allow_nan=False)
         + "\n"
     )
+    report_path = write_metrics_markdown(directory, json_safe(result))
+    print("Readable metrics: %s" % report_path, flush=True)
     print(
         json.dumps(
             json_safe(
